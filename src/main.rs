@@ -34,6 +34,10 @@ fn main() -> Result<()> {
 
     // 4. Dispatch standard commands
     match args.command {
+        Some(Commands::Ui { port, no_browser }) | Some(Commands::Gui { port, no_browser }) => {
+            launch_gui(device, port, no_browser)?;
+        }
+
         None | Some(Commands::Tui) => {
             let mut app = TuiApp::new(device);
             app.run()?;
@@ -105,6 +109,28 @@ fn main() -> Result<()> {
         Some(Commands::List) => unreachable!(),
     }
 
+    Ok(())
+}
+
+fn launch_gui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
+    if !no_browser {
+        let p = port;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let url = format!("http://localhost:{}", p);
+            // Try launching Chrome in native-like borderless app mode first
+            let chrome_res = std::process::Command::new("google-chrome")
+                .arg(format!("--app={}", url))
+                .spawn();
+
+            if chrome_res.is_err() {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+        });
+    }
+
+    let server = api::ApiServer::new(device, port);
+    server.run()?;
     Ok(())
 }
 

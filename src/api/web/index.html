@@ -1,0 +1,1302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logitech Rally PTZ Controller</title>
+  <style>
+    :root {
+      --bg-base: #0b0f19;
+      --bg-card: #151d30;
+      --bg-card-hover: #1e2942;
+      --bg-input: #0e1526;
+      --border: #24324f;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --cyan: #06b6d4;
+      --cyan-hover: #0891b2;
+      --cyan-glow: rgba(6, 182, 212, 0.25);
+      --red: #ef4444;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --purple: #8b5cf6;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Top Bar */
+    header {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand svg {
+      width: 32px;
+      height: 32px;
+      fill: var(--cyan);
+    }
+
+    .brand-text h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+
+    .brand-text p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+    }
+
+    .indicator-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.9); }
+    }
+
+    .btn {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 0.85rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary {
+      background: var(--cyan);
+      color: #0b0f19;
+      border-color: var(--cyan);
+      font-weight: 600;
+    }
+
+    .btn-primary:hover {
+      background: var(--cyan-hover);
+      border-color: var(--cyan-hover);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .btn-danger:hover {
+      background: var(--red);
+      color: #fff;
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      padding: 20px 24px;
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 24px;
+      max-width: 1700px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    @media (max-width: 1080px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Left Column */
+    .left-col {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Video Monitor Card */
+    .video-card {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      position: relative;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .video-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 24px;
+    }
+
+    .video-placeholder svg {
+      width: 56px;
+      height: 56px;
+      fill: var(--border);
+    }
+
+    .video-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+    }
+
+    .video-top-hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .hud-badge {
+      background: rgba(11, 15, 25, 0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-family: monospace;
+      color: #fff;
+    }
+
+    .video-controls {
+      pointer-events: auto;
+      display: flex;
+      gap: 8px;
+    }
+
+    .crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 60px;
+      height: 60px;
+      border: 1px dashed rgba(6, 182, 212, 0.4);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .crosshair::before, .crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(6, 182, 212, 0.7);
+    }
+    .crosshair::before { width: 14px; height: 1.5px; }
+    .crosshair::after { width: 1.5px; height: 14px; }
+
+    /* PTZ Control Panel */
+    .ptz-grid {
+      display: grid;
+      grid-template-columns: 280px 1fr 200px;
+      gap: 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      align-items: center;
+    }
+
+    @media (max-width: 900px) {
+      .ptz-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Circular D-Pad */
+    .dpad-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .dpad {
+      position: relative;
+      width: 190px;
+      height: 190px;
+      background: var(--bg-input);
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 4px 12px rgba(0, 0, 0, 0.6);
+    }
+
+    .dpad-btn {
+      position: absolute;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      transition: all 0.1s ease;
+    }
+
+    .dpad-btn:hover {
+      background: var(--cyan);
+      color: #000;
+      border-color: var(--cyan);
+    }
+
+    .dpad-btn:active {
+      transform: scale(0.92);
+    }
+
+    .dpad-up {
+      top: 10px;
+      left: 65px;
+      width: 60px;
+      height: 48px;
+      border-radius: 14px 14px 6px 6px;
+    }
+
+    .dpad-down {
+      bottom: 10px;
+      left: 65px;
+      width: 60px;
+      height: 48px;
+      border-radius: 6px 6px 14px 14px;
+    }
+
+    .dpad-left {
+      left: 10px;
+      top: 65px;
+      width: 48px;
+      height: 60px;
+      border-radius: 14px 6px 6px 14px;
+    }
+
+    .dpad-right {
+      right: 10px;
+      top: 65px;
+      width: 48px;
+      height: 60px;
+      border-radius: 6px 14px 14px 6px;
+    }
+
+    .dpad-center {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: var(--bg-input);
+      border: 2px solid var(--cyan);
+      color: var(--cyan);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .dpad-center:hover {
+      background: var(--cyan);
+      color: #000;
+    }
+
+    /* 2D Radar Canvas */
+    .radar-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .radar-canvas-container {
+      position: relative;
+      width: 100%;
+      max-width: 320px;
+      height: 180px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      cursor: crosshair;
+    }
+
+    #radarCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .radar-stats {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 320px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    /* Zoom Column */
+    .zoom-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px 12px;
+    }
+
+    .zoom-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .zoom-slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 120px;
+    }
+
+    input[type=range].vertical-slider {
+      writing-mode: vertical-lr;
+      direction: rtl;
+      width: 24px;
+      height: 110px;
+      accent-color: var(--cyan);
+      cursor: pointer;
+    }
+
+    .zoom-badge {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--cyan);
+      font-family: monospace;
+    }
+
+    .quick-zoom-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      width: 100%;
+    }
+
+    .btn-pill {
+      padding: 4px 6px;
+      font-size: 0.75rem;
+      border-radius: 4px;
+    }
+
+    /* Step Selector */
+    .step-selector {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 20px;
+      font-size: 0.85rem;
+    }
+
+    .step-chips {
+      display: flex;
+      gap: 6px;
+    }
+
+    .step-chip {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 4px 12px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+
+    .step-chip.active {
+      background: var(--cyan);
+      color: #000;
+      border-color: var(--cyan);
+      font-weight: 700;
+    }
+
+    /* Right Column (Tabs/Sidebar) */
+    .right-col {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Hardware Presets Grid */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .preset-btn {
+      height: 52px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 1rem;
+      transition: all 0.15s;
+    }
+
+    .preset-btn span {
+      font-size: 0.65rem;
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+
+    .preset-btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+
+    .save-mode-active .preset-btn {
+      border-color: var(--red);
+      background: rgba(239, 68, 68, 0.08);
+    }
+
+    .save-mode-active .preset-btn:hover {
+      background: var(--red);
+      color: #fff;
+    }
+
+    .preset-mode-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+    }
+
+    /* Software Presets */
+    .soft-preset-input {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      margin-bottom: 12px;
+    }
+
+    .soft-preset-input input {
+      flex: 1;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      font-size: 0.85rem;
+      outline: none;
+    }
+
+    .soft-preset-input input:focus {
+      border-color: var(--cyan);
+    }
+
+    .soft-preset-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+
+    .soft-preset-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+    }
+
+    .soft-preset-meta {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    /* Camera Sensor Settings (from PDF) */
+    .setting-group {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .setting-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .setting-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .setting-label span:last-child {
+      color: #fff;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .flicker-chips {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .flicker-chip {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 8px 4px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 0.8rem;
+      text-align: center;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+
+    .flicker-chip.active {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: var(--green);
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    input[type=range].horizontal-slider {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-input);
+      border-radius: 4px;
+      accent-color: var(--cyan);
+      cursor: pointer;
+    }
+
+    /* Toast Notifications */
+    #toastContainer {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 1000;
+    }
+
+    .toast {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--cyan);
+      padding: 10px 16px;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      font-size: 0.85rem;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      animation: slideIn 0.25s ease;
+      min-width: 240px;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" opacity=".2"/>
+        <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4zM15 16H5V8h10v8z"/>
+      </svg>
+      <div class="brand-text">
+        <h1>Logitech Rally PTZ Controller</h1>
+        <p id="devicePathLabel">Connecting to camera...</p>
+      </div>
+    </div>
+
+    <div class="header-status">
+      <div class="status-badge">
+        <div class="indicator-dot" id="statusDot"></div>
+        <span id="connectionStatus">Online</span>
+      </div>
+      <button class="btn" id="btnHomeTop" title="Return to Home">
+        ⌂ Home
+      </button>
+      <button class="btn" id="btnRefresh">
+        ↻ Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main>
+    <!-- Left Column: Video & PTZ -->
+    <div class="left-col">
+      <!-- Live Video Card -->
+      <div class="video-card">
+        <video id="webcamVideo" autoplay playsinline muted></video>
+        <div class="video-placeholder" id="videoPlaceholder">
+          <svg viewBox="0 0 24 24">
+            <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+          </svg>
+          <p>Live Video Preview</p>
+          <button class="btn btn-primary" id="btnStartVideo">Start Video Stream</button>
+        </div>
+
+        <div class="video-overlay" id="videoOverlay" style="display: none;">
+          <div class="video-top-hud">
+            <div class="hud-badge" id="hudCoords">Pan: 0.0° | Tilt: 0.0° | 1.0x</div>
+            <div class="video-controls">
+              <button class="btn btn-pill" id="btnToggleCrosshair">Crosshair</button>
+              <button class="btn btn-pill" id="btnFullscreen">Fullscreen</button>
+            </div>
+          </div>
+          <div class="crosshair" id="crosshairOverlay"></div>
+        </div>
+      </div>
+
+      <!-- PTZ Controls Area -->
+      <div class="ptz-grid">
+        <!-- D-Pad -->
+        <div class="dpad-container">
+          <div class="dpad">
+            <button class="dpad-btn dpad-up" id="btnTiltUp" title="Tilt Up">▲</button>
+            <button class="dpad-btn dpad-down" id="btnTiltDown" title="Tilt Down">▼</button>
+            <button class="dpad-btn dpad-left" id="btnPanLeft" title="Pan Left">◀</button>
+            <button class="dpad-btn dpad-right" id="btnPanRight" title="Pan Right">▶</button>
+            <button class="dpad-btn dpad-center" id="btnHome" title="Home">⌂</button>
+          </div>
+        </div>
+
+        <!-- 2D Radar Canvas -->
+        <div class="radar-box">
+          <div class="radar-canvas-container" id="radarWrap">
+            <canvas id="radarCanvas" width="320" height="180"></canvas>
+          </div>
+          <div class="radar-stats">
+            <span id="panStat">Pan: 0.0°</span>
+            <span id="tiltStat">Tilt: 0.0°</span>
+          </div>
+        </div>
+
+        <!-- Zoom Slider -->
+        <div class="zoom-box">
+          <div class="zoom-title">Optical Zoom</div>
+          <button class="btn btn-pill" id="btnZoomIn">+</button>
+          <div class="zoom-slider-wrap">
+            <input type="range" min="1.0" max="15.0" step="0.1" value="1.0" class="vertical-slider" id="zoomSlider">
+          </div>
+          <button class="btn btn-pill" id="btnZoomOut">-</button>
+          <div class="zoom-badge" id="zoomBadge">1.0x</div>
+          <div class="quick-zoom-grid">
+            <button class="btn btn-pill" onclick="setZoom(1.0)">1x</button>
+            <button class="btn btn-pill" onclick="setZoom(2.0)">2x</button>
+            <button class="btn btn-pill" onclick="setZoom(5.0)">5x</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step Size Selector -->
+      <div class="step-selector">
+        <span>Step Size:</span>
+        <div class="step-chips">
+          <div class="step-chip" data-step="1">1°</div>
+          <div class="step-chip" data-step="2">2°</div>
+          <div class="step-chip active" data-step="5">5°</div>
+          <div class="step-chip" data-step="10">10°</div>
+          <div class="step-chip" data-step="20">20°</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Presets & Image Controls -->
+    <div class="right-col">
+      <!-- Hardware Presets Card -->
+      <div class="card">
+        <div class="card-header">
+          <h2>💾 Camera Presets</h2>
+        </div>
+
+        <div class="preset-mode-toggle">
+          <span id="modeDesc">Mode: <strong>Recall (Click to Go)</strong></span>
+          <button class="btn btn-pill" id="btnToggleSaveMode">Save Mode</button>
+        </div>
+
+        <p style="font-size: 0.75rem; color: var(--text-muted); margin: 10px 0 6px;">Hardware EEPROM Presets (1–8):</p>
+        <div class="preset-grid" id="presetGrid">
+          <button class="preset-btn" data-preset="1">1<span>Preset</span></button>
+          <button class="preset-btn" data-preset="2">2<span>Preset</span></button>
+          <button class="preset-btn" data-preset="3">3<span>Preset</span></button>
+          <button class="preset-btn" data-preset="4">4<span>Preset</span></button>
+          <button class="preset-btn" data-preset="5">5<span>Preset</span></button>
+          <button class="preset-btn" data-preset="6">6<span>Preset</span></button>
+          <button class="preset-btn" data-preset="7">7<span>Preset</span></button>
+          <button class="preset-btn" data-preset="8">8<span>Preset</span></button>
+        </div>
+
+        <div class="soft-preset-input">
+          <input type="text" id="softPresetName" placeholder="New preset name (e.g. Podium)">
+          <button class="btn btn-primary" id="btnSaveSoft">Save</button>
+        </div>
+
+        <div class="soft-preset-list" id="softPresetList">
+          <!-- Dynamic soft presets -->
+        </div>
+      </div>
+
+      <!-- Image & Flicker Settings Card (PDF Reference) -->
+      <div class="card">
+        <div class="card-header">
+          <h2>⚙️ Camera & Lighting</h2>
+        </div>
+
+        <div class="setting-group">
+          <!-- Anti-Flicker -->
+          <div class="setting-item">
+            <div class="setting-label">
+              <span>Anti-Flicker (Power Line Freq)</span>
+              <span id="flickerLabel">50 Hz</span>
+            </div>
+            <div class="flicker-chips">
+              <div class="flicker-chip" data-flicker="0">Off</div>
+              <div class="flicker-chip active" data-flicker="50">50 Hz (PAL)</div>
+              <div class="flicker-chip" data-flicker="60">60 Hz (NTSC)</div>
+            </div>
+          </div>
+
+          <!-- Brightness -->
+          <div class="setting-item">
+            <div class="setting-label">
+              <span>Brightness</span>
+              <span id="brightnessVal">128</span>
+            </div>
+            <input type="range" min="0" max="255" value="128" class="horizontal-slider" id="brightnessSlider">
+          </div>
+
+          <!-- Contrast -->
+          <div class="setting-item">
+            <div class="setting-label">
+              <span>Contrast</span>
+              <span id="contrastVal">128</span>
+            </div>
+            <input type="range" min="0" max="255" value="128" class="horizontal-slider" id="contrastSlider">
+          </div>
+
+          <!-- Exposure Toggle -->
+          <div class="setting-item" style="flex-direction: row; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">Auto Exposure</span>
+            <button class="btn btn-pill" id="btnAutoExp">Auto (Aperture)</button>
+          </div>
+
+          <!-- Auto Focus Toggle -->
+          <div class="setting-item" style="flex-direction: row; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">Auto Focus</span>
+            <button class="btn btn-pill" id="btnAutoFocus">Enabled</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toastContainer"></div>
+
+  <script>
+    // State
+    let currentStep = 5.0;
+    let isSaveMode = false;
+    let currentPan = 0.0;
+    let currentTilt = 0.0;
+    let currentZoom = 1.0;
+    let isDraggingRadar = false;
+
+    // Toast helper
+    function showToast(message, isError = false) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      if (isError) toast.style.borderLeftColor = 'var(--red)';
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'all 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // API calls
+    async function apiPost(endpoint) {
+      try {
+        const res = await fetch(endpoint, { method: 'POST' });
+        const json = await res.json();
+        if (json.error) {
+          showToast(json.error, true);
+        } else {
+          refreshStatus();
+        }
+        return json;
+      } catch (err) {
+        showToast('API Connection Error', true);
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        
+        document.getElementById('devicePathLabel').textContent = `${data.card_name} (${data.device_path})`;
+        document.getElementById('statusDot').style.background = 'var(--green)';
+        document.getElementById('connectionStatus').textContent = 'Online';
+
+        currentPan = data.pan_deg;
+        currentTilt = data.tilt_deg;
+        currentZoom = data.zoom_x;
+
+        document.getElementById('panStat').textContent = `Pan: ${currentPan.toFixed(1)}°`;
+        document.getElementById('tiltStat').textContent = `Tilt: ${currentTilt.toFixed(1)}°`;
+        document.getElementById('hudCoords').textContent = `Pan: ${currentPan.toFixed(1)}° | Tilt: ${currentTilt.toFixed(1)}° | ${currentZoom.toFixed(1)}x`;
+        document.getElementById('zoomBadge').textContent = `${currentZoom.toFixed(1)}x`;
+        document.getElementById('zoomSlider').value = currentZoom;
+
+        // Anti-flicker
+        const f = data.power_line_frequency;
+        document.querySelectorAll('.flicker-chip').forEach(chip => {
+          chip.classList.toggle('active', parseInt(chip.dataset.flicker) === f);
+        });
+        document.getElementById('flickerLabel').textContent = f === 1 ? '50 Hz' : (f === 2 ? '60 Hz' : 'Off');
+
+        // Brightness & Contrast
+        if (data.brightness !== null) {
+          document.getElementById('brightnessSlider').value = data.brightness;
+          document.getElementById('brightnessVal').textContent = data.brightness;
+        }
+        if (data.contrast !== null) {
+          document.getElementById('contrastSlider').value = data.contrast;
+          document.getElementById('contrastVal').textContent = data.contrast;
+        }
+
+        drawRadar();
+      } catch (e) {
+        document.getElementById('statusDot').style.background = 'var(--red)';
+        document.getElementById('connectionStatus').textContent = 'Offline';
+      }
+    }
+
+    // 2D Radar Canvas
+    const canvas = document.getElementById('radarCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function drawRadar() {
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Background grid
+      ctx.strokeStyle = '#1e2942';
+      ctx.lineWidth = 1;
+      
+      // Axes
+      ctx.beginPath();
+      ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h);
+      const zeroY = h * (50 / 140); // 50° is top, -90° is bottom
+      ctx.moveTo(0, zeroY); ctx.lineTo(w, zeroY);
+      ctx.stroke();
+
+      // Home marker
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(w / 2, zeroY, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Camera position
+      // Pan: -90° to +90° -> 0 to w
+      const camX = ((currentPan + 90) / 180) * w;
+      // Tilt: -90° to +50° (range 140) -> h to 0
+      const camY = ((50 - currentTilt) / 140) * h;
+
+      // Target Crosshair
+      ctx.strokeStyle = '#06b6d4';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(camX, camY, 10, 0, Math.PI * 2);
+      ctx.moveTo(camX - 16, camY); ctx.lineTo(camX + 16, camY);
+      ctx.moveTo(camX, camY - 16); ctx.lineTo(camX, camY + 16);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(camX, camY, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Radar click to move
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+      const targetPan = (clickX / canvas.width) * 180 - 90;
+      const targetTilt = 50 - (clickY / canvas.height) * 140;
+
+      apiPost(`/api/pan?deg=${targetPan.toFixed(1)}`);
+      apiPost(`/api/tilt?deg=${targetTilt.toFixed(1)}`);
+      showToast(`Moving to Pan ${targetPan.toFixed(1)}°, Tilt ${targetTilt.toFixed(1)}°`);
+    });
+
+    // D-Pad Event Handlers
+    document.getElementById('btnPanLeft').addEventListener('click', () => {
+      apiPost(`/api/pan?dir=left&step=${currentStep}`);
+    });
+    document.getElementById('btnPanRight').addEventListener('click', () => {
+      apiPost(`/api/pan?dir=right&step=${currentStep}`);
+    });
+    document.getElementById('btnTiltUp').addEventListener('click', () => {
+      apiPost(`/api/tilt?dir=up&step=${currentStep}`);
+    });
+    document.getElementById('btnTiltDown').addEventListener('click', () => {
+      apiPost(`/api/tilt?dir=down&step=${currentStep}`);
+    });
+    document.getElementById('btnHome').addEventListener('click', () => {
+      apiPost('/api/home');
+      showToast('Camera reset to Home');
+    });
+    document.getElementById('btnHomeTop').addEventListener('click', () => {
+      apiPost('/api/home');
+      showToast('Camera reset to Home');
+    });
+    document.getElementById('btnRefresh').addEventListener('click', refreshStatus);
+
+    // Zoom
+    function setZoom(val) {
+      apiPost(`/api/zoom?x=${val}`);
+      showToast(`Zoom set to ${val}x`);
+    }
+
+    document.getElementById('btnZoomIn').addEventListener('click', () => {
+      apiPost('/api/zoom?dir=in&step=0.5');
+    });
+    document.getElementById('btnZoomOut').addEventListener('click', () => {
+      apiPost('/api/zoom?dir=out&step=0.5');
+    });
+    document.getElementById('zoomSlider').addEventListener('change', (e) => {
+      setZoom(e.target.value);
+    });
+
+    // Step Selector
+    document.querySelectorAll('.step-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('.step-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        currentStep = parseFloat(chip.dataset.step);
+        showToast(`Move step: ${currentStep}°`);
+      });
+    });
+
+    // Presets
+    const saveToggle = document.getElementById('btnToggleSaveMode');
+    saveToggle.addEventListener('click', () => {
+      isSaveMode = !isSaveMode;
+      const grid = document.getElementById('presetGrid');
+      grid.classList.toggle('save-mode-active', isSaveMode);
+      document.getElementById('modeDesc').innerHTML = isSaveMode 
+        ? '<strong style="color:var(--red);">Save Mode (Click button to OVERWRITE preset)</strong>' 
+        : 'Mode: <strong>Recall (Click to Go)</strong>';
+      saveToggle.textContent = isSaveMode ? 'Cancel Save' : 'Save Mode';
+      saveToggle.classList.toggle('btn-danger', isSaveMode);
+    });
+
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const num = btn.dataset.preset;
+        if (isSaveMode) {
+          apiPost(`/api/preset/save/${num}`);
+          showToast(`Preset ${num} saved to camera!`);
+          saveToggle.click(); // exit save mode
+        } else {
+          apiPost(`/api/preset/recall/${num}`);
+          showToast(`Moving to Preset ${num}...`);
+        }
+      });
+    });
+
+    // Software Presets
+    async function loadSoftPresets() {
+      try {
+        const res = await fetch('/api/software-preset/list');
+        const list = await res.json();
+        const container = document.getElementById('softPresetList');
+        container.innerHTML = '';
+        list.forEach(p => {
+          const item = document.createElement('div');
+          item.className = 'soft-preset-item';
+          item.innerHTML = `
+            <div>
+              <strong>${p.name}</strong>
+              <div class="soft-preset-meta">P:${p.pan_deg.toFixed(1)}° T:${p.tilt_deg.toFixed(1)}° Z:${p.zoom_x.toFixed(1)}x</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-pill" onclick="recallSoft('${p.name}')">Go</button>
+              <button class="btn btn-pill btn-danger" onclick="deleteSoft('${p.name}')">×</button>
+            </div>
+          `;
+          container.appendChild(item);
+        });
+      } catch (e) {}
+    }
+
+    async function recallSoft(name) {
+      apiPost(`/api/software-preset/recall?name=${encodeURIComponent(name)}`);
+      showToast(`Recalled '${name}'`);
+    }
+
+    async function deleteSoft(name) {
+      apiPost(`/api/software-preset/delete?name=${encodeURIComponent(name)}`);
+      showToast(`Deleted '${name}'`);
+      setTimeout(loadSoftPresets, 300);
+    }
+
+    document.getElementById('btnSaveSoft').addEventListener('click', () => {
+      const name = document.getElementById('softPresetName').value.trim();
+      if (!name) return;
+      apiPost(`/api/software-preset/save?name=${encodeURIComponent(name)}`);
+      document.getElementById('softPresetName').value = '';
+      showToast(`Saved software preset '${name}'`);
+      setTimeout(loadSoftPresets, 300);
+    });
+
+    // Anti-Flicker chips
+    document.querySelectorAll('.flicker-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const hz = chip.dataset.flicker;
+        apiPost(`/api/flicker?hz=${hz}`);
+        showToast(`Anti-flicker: ${hz === '0' ? 'Off' : hz + ' Hz'}`);
+      });
+    });
+
+    // Sliders
+    document.getElementById('brightnessSlider').addEventListener('change', (e) => {
+      apiPost(`/api/brightness?val=${e.target.value}`);
+    });
+    document.getElementById('contrastSlider').addEventListener('change', (e) => {
+      apiPost(`/api/contrast?val=${e.target.value}`);
+    });
+
+    // Live Video Stream (WebRTC getUserMedia)
+    const videoElem = document.getElementById('webcamVideo');
+    const startVideoBtn = document.getElementById('btnStartVideo');
+    const videoPlaceholder = document.getElementById('videoPlaceholder');
+    const videoOverlay = document.getElementById('videoOverlay');
+
+    startVideoBtn.addEventListener('click', async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        // Find Logitech Rally or first camera
+        const rally = videoDevices.find(d => d.label.toLowerCase().includes('rally')) || videoDevices[0];
+        
+        const constraints = {
+          video: rally ? { deviceId: { exact: rally.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } } : true
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        videoElem.srcObject = stream;
+        videoPlaceholder.style.display = 'none';
+        videoOverlay.style.display = 'flex';
+        showToast('Live Camera Stream Connected');
+      } catch (err) {
+        showToast('Camera stream failed: ' + err.message, true);
+      }
+    });
+
+    // Crosshair & Fullscreen
+    document.getElementById('btnToggleCrosshair').addEventListener('click', () => {
+      const ch = document.getElementById('crosshairOverlay');
+      ch.style.display = ch.style.display === 'none' ? 'flex' : 'none';
+    });
+    document.getElementById('btnFullscreen').addEventListener('click', () => {
+      const card = document.querySelector('.video-card');
+      if (!document.fullscreenElement) card.requestFullscreen();
+      else document.exitFullscreen();
+    });
+
+    // Keyboard Shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      switch (e.key) {
+        case 'ArrowLeft': e.preventDefault(); apiPost(`/api/pan?dir=left&step=${currentStep}`); break;
+        case 'ArrowRight': e.preventDefault(); apiPost(`/api/pan?dir=right&step=${currentStep}`); break;
+        case 'ArrowUp': e.preventDefault(); apiPost(`/api/tilt?dir=up&step=${currentStep}`); break;
+        case 'ArrowDown': e.preventDefault(); apiPost(`/api/tilt?dir=down&step=${currentStep}`); break;
+        case '+': case '=': e.preventDefault(); apiPost('/api/zoom?dir=in&step=0.5'); break;
+        case '-': case '_': e.preventDefault(); apiPost('/api/zoom?dir=out&step=0.5'); break;
+        case 'Home': case 'h': e.preventDefault(); apiPost('/api/home'); break;
+        case 'f': case 'F':
+          const curChip = document.querySelector('.flicker-chip.active');
+          const nextHz = curChip.dataset.flicker === '50' ? '60' : (curChip.dataset.flicker === '60' ? '0' : '50');
+          apiPost(`/api/flicker?hz=${nextHz}`);
+          break;
+        default:
+          if (e.key >= '1' && e.key <= '8') {
+            if (e.shiftKey) {
+              apiPost(`/api/preset/save/${e.key}`);
+              showToast(`Preset ${e.key} saved!`);
+            } else {
+              apiPost(`/api/preset/recall/${e.key}`);
+              showToast(`Moving to Preset ${e.key}...`);
+            }
+          }
+      }
+    });
+
+    // Init
+    refreshStatus();
+    loadSoftPresets();
+    setInterval(refreshStatus, 2000);
+  </script>
+</body>
+</html>

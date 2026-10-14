@@ -50,6 +50,28 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Launch the graphical UI application (Live Video + D-Pad + Presets)
+    Ui {
+        /// HTTP port to bind to
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+
+        /// Do not automatically open a browser window
+        #[arg(long)]
+        no_browser: bool,
+    },
+
+    /// Alias for ui (Graphical User Interface)
+    Gui {
+        /// HTTP port to bind to
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+
+        /// Do not automatically open a browser window
+        #[arg(long)]
+        no_browser: bool,
+    },
+
     /// Launch the interactive Terminal User Interface (TUI)
     Tui,
 

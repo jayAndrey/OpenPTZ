@@ -7,6 +7,8 @@ use tiny_http::{Header, Response, Server, StatusCode};
 use crate::presets::PresetManager;
 use crate::v4l2::CameraDevice;
 
+const INDEX_HTML: &str = include_str!("web/index.html");
+
 pub struct ApiServer {
     device: Arc<Mutex<CameraDevice>>,
     preset_mgr: Arc<Mutex<PresetManager>>,
@@ -27,17 +29,8 @@ impl ApiServer {
         let server = Server::http(&addr).map_err(|e| anyhow::anyhow!("{}", e))
             .with_context(|| format!("Failed to bind HTTP server to {}", addr))?;
 
-        println!("🌐 PTZ HTTP API Server listening on http://{}", addr);
-        println!("Endpoints:");
-        println!("  GET  /api/status");
-        println!("  POST /api/pan?deg=10.0  or ?step=5.0 / ?dir=left|right");
-        println!("  POST /api/tilt?deg=-5.0 or ?step=5.0 / ?dir=up|down");
-        println!("  POST /api/zoom?x=2.0    or ?step=0.5 / ?dir=in|out");
-        println!("  POST /api/home");
-        println!("  POST /api/preset/recall/<1-8>");
-        println!("  POST /api/preset/save/<1-8>");
-        println!("  POST /api/flicker?hz=50|60|0");
-        println!("  POST /api/brightness?val=128");
+        println!("🌐 PTZ Controller running at: http://localhost:{}", self.port);
+        println!("   (Also accessible from other devices at: http://{}:{})", get_local_ip().unwrap_or_else(|| "0.0.0.0".to_string()), self.port);
 
         for request in server.incoming_requests() {
             let dev = Arc::clone(&self.device);
@@ -54,18 +47,21 @@ impl ApiServer {
             let query_params: HashMap<String, String> = query_str
                 .split('&')
                 .filter_map(|pair| pair.split_once('='))
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|(k, v)| {
+                    let key = urlencoding_decode(k);
+                    let val = urlencoding_decode(v);
+                    (key, val)
+                })
                 .collect();
 
-            let response = Self::handle_request(&dev, &pm, &method, &path, &query_params);
+            let (status_code, content_type, body) = Self::handle_request(&dev, &pm, &method, &path, &query_params);
 
-            let json_header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+            let ct_header = Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
             let cors_header = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
 
-            let (status_code, body) = response;
             let resp = Response::from_string(body)
                 .with_status_code(StatusCode(status_code))
-                .with_header(json_header)
+                .with_header(ct_header)
                 .with_header(cors_header);
 
             let _ = request.respond(resp);
@@ -80,17 +76,22 @@ impl ApiServer {
         method: &str,
         path: &str,
         params: &HashMap<String, String>,
-    ) -> (u16, String) {
+    ) -> (u16, &'static str, String) {
+        // Serve Web GUI
+        if (method == "GET" || method == "HEAD") && (path == "/" || path == "/index.html") {
+            return (200, "text/html; charset=utf-8", INDEX_HTML.to_string());
+        }
+
         let camera = match dev.lock() {
             Ok(c) => c,
-            Err(_) => return (500, r#"{"error":"Camera mutex poisoned"}"#.to_string()),
+            Err(_) => return (500, "application/json", r#"{"error":"Camera mutex poisoned"}"#.to_string()),
         };
 
         if method == "GET" && path == "/api/status" {
             let status = camera.get_status();
             return match serde_json::to_string_pretty(&status) {
-                Ok(s) => (200, s),
-                Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                Ok(s) => (200, "application/json", s),
+                Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
             };
         }
 
@@ -98,8 +99,8 @@ impl ApiServer {
             match path {
                 "/api/home" => {
                     return match camera.goto_home() {
-                        Ok(()) => (200, r#"{"status":"ok","action":"home"}"#.to_string()),
-                        Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                        Ok(()) => (200, "application/json", r#"{"status":"ok","action":"home"}"#.to_string()),
+                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                     };
                 }
 
@@ -107,8 +108,8 @@ impl ApiServer {
                     if let Some(deg_str) = params.get("deg") {
                         if let Ok(deg) = deg_str.parse::<f32>() {
                             return match camera.set_pan_deg(deg) {
-                                Ok(()) => (200, format!(r#"{{"status":"ok","pan_deg":{}}}"#, deg)),
-                                Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                                Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","pan_deg":{}}}"#, deg)),
+                                Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                             };
                         }
                     }
@@ -116,8 +117,8 @@ impl ApiServer {
                         let step = params.get("step").and_then(|s| s.parse::<f32>().ok()).unwrap_or(5.0);
                         let delta = if dir == "left" { -step } else { step };
                         return match camera.pan_relative(delta) {
-                            Ok(new_pan) => (200, format!(r#"{{"status":"ok","pan_deg":{}}}"#, new_pan)),
-                            Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                            Ok(new_pan) => (200, "application/json", format!(r#"{{"status":"ok","pan_deg":{}}}"#, new_pan)),
+                            Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                         };
                     }
                 }
@@ -126,8 +127,8 @@ impl ApiServer {
                     if let Some(deg_str) = params.get("deg") {
                         if let Ok(deg) = deg_str.parse::<f32>() {
                             return match camera.set_tilt_deg(deg) {
-                                Ok(()) => (200, format!(r#"{{"status":"ok","tilt_deg":{}}}"#, deg)),
-                                Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                                Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","tilt_deg":{}}}"#, deg)),
+                                Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                             };
                         }
                     }
@@ -135,8 +136,8 @@ impl ApiServer {
                         let step = params.get("step").and_then(|s| s.parse::<f32>().ok()).unwrap_or(5.0);
                         let delta = if dir == "down" { -step } else { step };
                         return match camera.tilt_relative(delta) {
-                            Ok(new_tilt) => (200, format!(r#"{{"status":"ok","tilt_deg":{}}}"#, new_tilt)),
-                            Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                            Ok(new_tilt) => (200, "application/json", format!(r#"{{"status":"ok","tilt_deg":{}}}"#, new_tilt)),
+                            Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                         };
                     }
                 }
@@ -145,8 +146,8 @@ impl ApiServer {
                     if let Some(x_str) = params.get("x") {
                         if let Ok(x) = x_str.parse::<f32>() {
                             return match camera.set_zoom_x(x) {
-                                Ok(()) => (200, format!(r#"{{"status":"ok","zoom_x":{}}}"#, x)),
-                                Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                                Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","zoom_x":{}}}"#, x)),
+                                Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                             };
                         }
                     }
@@ -154,8 +155,8 @@ impl ApiServer {
                         let step = params.get("step").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.5);
                         let delta = if dir == "out" { -step } else { step };
                         return match camera.zoom_relative(delta) {
-                            Ok(new_zoom) => (200, format!(r#"{{"status":"ok","zoom_x":{}}}"#, new_zoom)),
-                            Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                            Ok(new_zoom) => (200, "application/json", format!(r#"{{"status":"ok","zoom_x":{}}}"#, new_zoom)),
+                            Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                         };
                     }
                 }
@@ -164,8 +165,8 @@ impl ApiServer {
                     if let Some(hz_str) = params.get("hz") {
                         if let Ok(hz) = hz_str.parse::<u32>() {
                             return match camera.set_power_line_frequency(hz) {
-                                Ok(()) => (200, format!(r#"{{"status":"ok","power_line_frequency_hz":{}}}"#, hz)),
-                                Err(e) => (400, format!(r#"{{"error":"{}"}}"#, e)),
+                                Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","power_line_frequency_hz":{}}}"#, hz)),
+                                Err(e) => (400, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                             };
                         }
                     }
@@ -175,8 +176,19 @@ impl ApiServer {
                     if let Some(val_str) = params.get("val") {
                         if let Ok(val) = val_str.parse::<i32>() {
                             return match camera.set_brightness(val) {
-                                Ok(()) => (200, format!(r#"{{"status":"ok","brightness":{}}}"#, val)),
-                                Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                                Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","brightness":{}}}"#, val)),
+                                Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                            };
+                        }
+                    }
+                }
+
+                "/api/contrast" => {
+                    if let Some(val_str) = params.get("val") {
+                        if let Ok(val) = val_str.parse::<i32>() {
+                            return match camera.set_contrast(val) {
+                                Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","contrast":{}}}"#, val)),
+                                Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                             };
                         }
                     }
@@ -189,8 +201,8 @@ impl ApiServer {
             if let Some(num_str) = path.strip_prefix("/api/preset/recall/") {
                 if let Ok(num) = num_str.parse::<u8>() {
                     return match camera.goto_hardware_preset(num) {
-                        Ok(()) => (200, format!(r#"{{"status":"ok","preset_recalled":{}}}"#, num)),
-                        Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                        Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","preset_recalled":{}}}"#, num)),
+                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                     };
                 }
             }
@@ -198,8 +210,8 @@ impl ApiServer {
             if let Some(num_str) = path.strip_prefix("/api/preset/save/") {
                 if let Ok(num) = num_str.parse::<u8>() {
                     return match camera.save_hardware_preset(num) {
-                        Ok(()) => (200, format!(r#"{{"status":"ok","preset_saved":{}}}"#, num)),
-                        Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                        Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","preset_saved":{}}}"#, num)),
+                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                     };
                 }
             }
@@ -209,13 +221,79 @@ impl ApiServer {
                 if let Ok(mgr) = pm.lock() {
                     let list = mgr.list();
                     return match serde_json::to_string_pretty(&list) {
-                        Ok(s) => (200, s),
-                        Err(e) => (500, format!(r#"{{"error":"{}"}}"#, e)),
+                        Ok(s) => (200, "application/json", s),
+                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
                     };
+                }
+            }
+
+            if path == "/api/software-preset/save" {
+                if let Some(name) = params.get("name") {
+                    let pan = camera.get_pan_deg().unwrap_or(0.0);
+                    let tilt = camera.get_tilt_deg().unwrap_or(0.0);
+                    let zoom = camera.get_zoom_x().unwrap_or(1.0);
+                    let b = camera.get_brightness().ok();
+                    let f = camera.get_power_line_frequency().ok();
+
+                    if let Ok(mut mgr) = pm.lock() {
+                        let _ = mgr.set_preset(name, pan, tilt, zoom, b, f);
+                        return (200, "application/json", format!(r#"{{"status":"ok","saved":"{}"}}"#, name));
+                    }
+                }
+            }
+
+            if path == "/api/software-preset/recall" {
+                if let Some(name) = params.get("name") {
+                    if let Ok(mgr) = pm.lock() {
+                        if let Some(p) = mgr.get_preset(name) {
+                            let _ = camera.move_pan_tilt(p.pan_deg, p.tilt_deg);
+                            let _ = camera.set_zoom_x(p.zoom_x);
+                            return (200, "application/json", format!(r#"{{"status":"ok","recalled":"{}"}}"#, name));
+                        }
+                    }
+                }
+            }
+
+            if path == "/api/software-preset/delete" {
+                if let Some(name) = params.get("name") {
+                    if let Ok(mut mgr) = pm.lock() {
+                        let _ = mgr.delete_preset(name);
+                        return (200, "application/json", format!(r#"{{"status":"ok","deleted":"{}"}}"#, name));
+                    }
                 }
             }
         }
 
-        (404, r#"{"error":"Endpoint not found"}"#.to_string())
+        (404, "application/json", r#"{"error":"Endpoint not found"}"#.to_string())
     }
+}
+
+fn urlencoding_decode(val: &str) -> String {
+    let mut result = String::new();
+    let mut chars = val.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(c1), Some(c2)) = (h1, h2) {
+                let hex_str = format!("{}{}", c1, c2);
+                if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                    result.push(byte as char);
+                    continue;
+                }
+            }
+        } else if c == '+' {
+            result.push(' ');
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn get_local_ip() -> Option<String> {
+    use std::net::UdpSocket;
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
 }
