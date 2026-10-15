@@ -4,12 +4,14 @@ use std::fs::{self, File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::constants::*;
 use super::ioctl::*;
+use crate::cameras::CameraProfile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
@@ -55,14 +57,40 @@ pub struct CameraStatus {
     pub auto_white_balance: Option<bool>,
 }
 
-pub struct CameraDevice {
+pub struct V4l2Device {
     file: File,
     path: PathBuf,
     card_name: String,
     has_rally_xu: bool,
+    pub profile: Arc<dyn CameraProfile>,
 }
 
-impl CameraDevice {
+pub type CameraDevice = V4l2Device;
+
+impl V4l2Device {
+    /// Read USB Vendor ID and Product ID from sysfs if device is a USB camera.
+    pub fn read_usb_vid_pid(dev_path: &Path) -> Option<(u16, u16)> {
+        let filename = dev_path.file_name()?.to_str()?;
+        let sysfs = Path::new("/sys/class/video4linux")
+            .join(filename)
+            .join("device");
+        for candidate in [
+            sysfs.join("idVendor"),
+            sysfs.join("../idVendor"),
+            sysfs.join("../../idVendor"),
+        ] {
+            if candidate.exists() {
+                let parent = candidate.parent()?;
+                let vid_str = fs::read_to_string(parent.join("idVendor")).ok()?;
+                let pid_str = fs::read_to_string(parent.join("idProduct")).ok()?;
+                let vid = u16::from_str_radix(vid_str.trim(), 16).ok()?;
+                let pid = u16::from_str_radix(pid_str.trim(), 16).ok()?;
+                return Some((vid, pid));
+            }
+        }
+        None
+    }
+
     /// Discover all video devices on the system
     pub fn discover_devices() -> Vec<DeviceInfo> {
         let mut devices = Vec::new();
@@ -103,8 +131,9 @@ impl CameraDevice {
                             .trim_matches(char::from(0))
                             .to_string();
 
-                        let is_rally = card.to_lowercase().contains("rally");
+                        let is_rally = dev.is_rally();
                         let supports_ptz = is_rally
+                            || dev.profile.capabilities().has_pan_tilt
                             || dev.get_ctrl(V4L2_CID_PAN_ABSOLUTE).is_ok()
                             || dev.get_ctrl(V4L2_CID_ZOOM_ABSOLUTE).is_ok();
 
@@ -132,11 +161,24 @@ impl CameraDevice {
             .open(path)
             .with_context(|| format!("Failed to open device {:?}", path))?;
 
+        let raw_fd = file.as_raw_fd();
+        let mut card_name = String::new();
+        let mut cap = V4l2Capability::default();
+        if unsafe { ioctl_call(raw_fd, VIDIOC_QUERYCAP, &mut cap) }.is_ok() {
+            card_name = String::from_utf8_lossy(&cap.card)
+                .trim_matches(char::from(0))
+                .to_string();
+        }
+
+        let vid_pid = Self::read_usb_vid_pid(path);
+        let profile = crate::cameras::detect_profile(&card_name, vid_pid);
+
         Ok(Self {
             file,
             path: path.to_path_buf(),
-            card_name: String::new(),
+            card_name,
             has_rally_xu: false,
+            profile,
         })
     }
 
@@ -150,18 +192,28 @@ impl CameraDevice {
             .open(&path_buf)
             .with_context(|| format!("Failed to open camera device {:?}", path_buf))?;
 
-        let mut dev = Self {
-            file,
-            path: path_buf,
-            card_name: String::new(),
-            has_rally_xu: false,
-        };
-
-        if let Ok(cap) = dev.query_capability() {
-            dev.card_name = String::from_utf8_lossy(&cap.card)
+        let raw_fd = file.as_raw_fd();
+        let mut card_name = String::new();
+        let mut cap = V4l2Capability::default();
+        if unsafe { ioctl_call(raw_fd, VIDIOC_QUERYCAP, &mut cap) }.is_ok() {
+            card_name = String::from_utf8_lossy(&cap.card)
                 .trim_matches(char::from(0))
                 .to_string();
         }
+
+        let vid_pid = Self::read_usb_vid_pid(&path_buf);
+        let profile = crate::cameras::detect_profile(&card_name, vid_pid);
+
+        // Run profile initialization hook
+        profile.on_open(raw_fd)?;
+
+        let mut dev = Self {
+            file,
+            path: path_buf,
+            card_name,
+            has_rally_xu: false,
+            profile,
+        };
 
         // Test Logitech XU peripheral mode control support
         dev.has_rally_xu = dev.check_xu_support();
@@ -201,6 +253,11 @@ impl CameraDevice {
 
     pub fn card_name(&self) -> &str {
         &self.card_name
+    }
+
+    pub fn is_rally(&self) -> bool {
+        self.profile.capabilities().vendor_name == "Logitech"
+            || self.card_name.to_lowercase().contains("rally")
     }
 
     pub fn has_rally_xu(&self) -> bool {
@@ -322,20 +379,25 @@ impl CameraDevice {
     }
 
     // -------------------------------------------------------------
-    // High-Level PTZ Operations
+    // High-Level PTZ Operations (Delegated to CameraProfile)
     // -------------------------------------------------------------
 
-    /// Get Pan in degrees (-90.0 to +90.0)
+    /// Get Pan in degrees
     pub fn get_pan_deg(&self) -> Result<f32> {
         let raw = self.get_ctrl(V4L2_CID_PAN_ABSOLUTE)?;
-        Ok(raw_to_deg(raw))
+        Ok(self.profile.limits().pan_raw_to_deg(raw))
     }
 
     /// Set Pan in degrees
     pub fn set_pan_deg(&self, deg: f32) -> Result<()> {
-        let clamped_deg = deg.clamp(-90.0, 90.0);
-        let raw = deg_to_raw(clamped_deg).clamp(RALLY_PAN_MIN, RALLY_PAN_MAX);
+        let raw = self.profile.limits().deg_to_pan_raw(deg);
         self.set_ctrl(V4L2_CID_PAN_ABSOLUTE, raw)
+    }
+
+    /// Set Pan to target degrees (alias for set_pan_deg)
+    #[inline]
+    pub fn pan_to_deg(&self, deg: f32) -> Result<()> {
+        self.set_pan_deg(deg)
     }
 
     /// Pan relatively by delta degrees
@@ -346,17 +408,22 @@ impl CameraDevice {
         self.get_pan_deg()
     }
 
-    /// Get Tilt in degrees (-90.0 to +50.0)
+    /// Get Tilt in degrees
     pub fn get_tilt_deg(&self) -> Result<f32> {
         let raw = self.get_ctrl(V4L2_CID_TILT_ABSOLUTE)?;
-        Ok(raw_to_deg(raw))
+        Ok(self.profile.limits().tilt_raw_to_deg(raw))
     }
 
     /// Set Tilt in degrees
     pub fn set_tilt_deg(&self, deg: f32) -> Result<()> {
-        let clamped_deg = deg.clamp(-90.0, 50.0);
-        let raw = deg_to_raw(clamped_deg).clamp(RALLY_TILT_MIN, RALLY_TILT_MAX);
+        let raw = self.profile.limits().deg_to_tilt_raw(deg);
         self.set_ctrl(V4L2_CID_TILT_ABSOLUTE, raw)
+    }
+
+    /// Set Tilt to target degrees (alias for set_tilt_deg)
+    #[inline]
+    pub fn tilt_to_deg(&self, deg: f32) -> Result<()> {
+        self.set_tilt_deg(deg)
     }
 
     /// Tilt relatively by delta degrees
@@ -374,17 +441,22 @@ impl CameraDevice {
         Ok(())
     }
 
-    /// Get Zoom multiplier (1.0x to 15.0x)
+    /// Get Zoom multiplier
     pub fn get_zoom_x(&self) -> Result<f32> {
         let raw = self.get_ctrl(V4L2_CID_ZOOM_ABSOLUTE)?;
-        Ok(zoom_raw_to_x(raw))
+        Ok(self.profile.limits().zoom_raw_to_x(raw))
     }
 
-    /// Set Zoom multiplier (1.0x to 15.0x)
+    /// Set Zoom multiplier
     pub fn set_zoom_x(&self, x: f32) -> Result<()> {
-        let clamped_x = x.clamp(1.0, 15.0);
-        let raw = zoom_x_to_raw(clamped_x).clamp(RALLY_ZOOM_MIN, RALLY_ZOOM_MAX);
+        let raw = self.profile.limits().zoom_x_to_raw(x);
         self.set_ctrl(V4L2_CID_ZOOM_ABSOLUTE, raw)
+    }
+
+    /// Set Zoom multiplier (alias for set_zoom_x)
+    #[inline]
+    pub fn zoom_to(&self, x: f32) -> Result<()> {
+        self.set_zoom_x(x)
     }
 
     /// Zoom relatively by delta multiplier
@@ -414,37 +486,45 @@ impl CameraDevice {
         Ok(())
     }
 
-    // -------------------------------------------------------------
-    // Logitech Hardware Commands & Presets (XU)
-    // -------------------------------------------------------------
-
-    /// Reset camera to Hardware Home Position
-    pub fn goto_home(&self) -> Result<()> {
-        if self.has_rally_xu {
-            let mut val: u8 = LOGI_XU_CMD_HOME;
-            let mut query = UvcXuControlQuery {
-                unit: LOGI_XU_PERIPHERAL_UNIT_ID,
-                selector: XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL,
-                query: UVC_SET_CUR,
-                size: 1,
-                data: &mut val as *mut u8,
-            };
-
-            unsafe {
-                let _ = ioctl_call(self.raw_fd(), UVCIOC_CTRL_QUERY, &mut query);
-            }
-        }
-
-        // Also ensure standard V4L2 registers are at home (Pan=0, Tilt=0, Zoom=100)
+    /// Reset camera to Hardware Home Position (delegating to profile)
+    pub fn home(&self) -> Result<()> {
+        let _ = self.profile.home(self.raw_fd());
+        let limits = self.profile.limits();
         let _ = self.set_ctrl(V4L2_CID_PAN_ABSOLUTE, 0);
         let _ = self.set_ctrl(V4L2_CID_TILT_ABSOLUTE, 0);
-        let _ = self.set_ctrl(V4L2_CID_ZOOM_ABSOLUTE, RALLY_ZOOM_MIN);
-
+        let _ = self.set_ctrl(V4L2_CID_ZOOM_ABSOLUTE, limits.zoom_min);
         Ok(())
     }
 
+    /// Reset camera to Hardware Home Position (backward-compatible alias)
+    #[inline]
+    pub fn goto_home(&self) -> Result<()> {
+        self.home()
+    }
+
+    /// Recall a hardware EEPROM preset (1..8)
+    pub fn recall_hardware_preset(&self, preset_num: u8) -> Result<()> {
+        self.profile
+            .recall_hardware_preset(self.raw_fd(), preset_num)
+    }
+
+    /// Save current position to a hardware EEPROM preset (1..8)
+    pub fn save_hardware_preset(&self, preset_num: u8) -> Result<()> {
+        self.profile.save_hardware_preset(self.raw_fd(), preset_num)
+    }
+
+    /// Move camera into privacy/sleep mode (e.g. downward park)
+    pub fn sleep_privacy(&self) -> Result<()> {
+        self.profile.sleep_privacy(self.raw_fd())
+    }
+
+    /// Wake camera from privacy mode
+    pub fn wake_privacy(&self) -> Result<()> {
+        self.profile.wake_privacy(self.raw_fd())
+    }
+
     // -------------------------------------------------------------
-    // Image and Sensor Controls (PDF Reference)
+    // Image and Sensor Controls
     // -------------------------------------------------------------
 
     /// Get current power line frequency setting (0: Disabled, 1: 50Hz, 2: 60Hz)
@@ -536,18 +616,21 @@ impl CameraDevice {
 
     /// Read comprehensive status
     pub fn get_status(&self) -> CameraStatus {
+        let limits = self.profile.limits();
         let pan_raw = self.get_ctrl(V4L2_CID_PAN_ABSOLUTE).unwrap_or(0);
         let tilt_raw = self.get_ctrl(V4L2_CID_TILT_ABSOLUTE).unwrap_or(0);
-        let zoom_raw = self.get_ctrl(V4L2_CID_ZOOM_ABSOLUTE).unwrap_or(100);
+        let zoom_raw = self
+            .get_ctrl(V4L2_CID_ZOOM_ABSOLUTE)
+            .unwrap_or(limits.zoom_min);
 
         CameraStatus {
             device_path: self.path.to_string_lossy().to_string(),
             card_name: self.card_name.clone(),
-            pan_deg: raw_to_deg(pan_raw),
+            pan_deg: limits.pan_raw_to_deg(pan_raw),
             pan_raw,
-            tilt_deg: raw_to_deg(tilt_raw),
+            tilt_deg: limits.tilt_raw_to_deg(tilt_raw),
             tilt_raw,
-            zoom_x: zoom_raw_to_x(zoom_raw),
+            zoom_x: limits.zoom_raw_to_x(zoom_raw),
             zoom_raw,
             brightness: self.get_brightness().ok(),
             contrast: self.get_contrast().ok(),

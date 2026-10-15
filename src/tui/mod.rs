@@ -263,7 +263,7 @@ impl TuiApp {
 
         let title = Line::from(vec![
             Span::styled(
-                "🎥 PTZ Control - Logitech Rally Camera ",
+                format!("🎥 PTZ Control - {} ", self.device.profile.name()),
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
