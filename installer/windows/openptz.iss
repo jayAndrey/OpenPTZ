@@ -2,7 +2,7 @@
 ; Builds a self-contained openptz-windows-x86_64-setup.exe installer.
 
 #define MyAppName "OpenPTZ"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "andryjay"
 #define MyAppURL "https://github.com/jayAndrey/OpenPTZ"
 #define MyAppExeName "openptz.exe"
@@ -45,13 +45,14 @@ Source: "..\..\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\OpenPTZ Web GUI"; Filename: "{app}\{#MyAppExeName}"; Parameters: "ui"; IconFilename: "{app}\openptz.ico"; Comment: "Launch OpenPTZ Web Interface and Video Stream"
+Name: "{group}\OpenPTZ Native GUI"; Filename: "{app}\{#MyAppExeName}"; Parameters: "gui"; IconFilename: "{app}\openptz.ico"; Comment: "Launch OpenPTZ Native Camera Controller"
+Name: "{group}\OpenPTZ Network UI"; Filename: "{app}\{#MyAppExeName}"; Parameters: "ui"; IconFilename: "{app}\openptz.ico"; Comment: "Launch OpenPTZ Network Interface"
 Name: "{group}\OpenPTZ Terminal UI"; Filename: "{app}\{#MyAppExeName}"; Parameters: "tui"; IconFilename: "{app}\openptz.ico"; Comment: "Launch OpenPTZ Terminal Interface"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\OpenPTZ Web GUI"; Filename: "{app}\{#MyAppExeName}"; Parameters: "ui"; IconFilename: "{app}\openptz.ico"; Tasks: desktopicon
+Name: "{autodesktop}\OpenPTZ"; Filename: "{app}\{#MyAppExeName}"; Parameters: "gui"; IconFilename: "{app}\openptz.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "ui"; Description: "Launch OpenPTZ Web GUI"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Parameters: "gui"; Description: "Launch OpenPTZ Native GUI"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // Helper function to add/remove {app} directory to/from user environment PATH

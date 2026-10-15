@@ -61,6 +61,14 @@ impl PresetManager {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn with_path(path: PathBuf) -> Self {
+        Self {
+            presets: BTreeMap::new(),
+            config_path: path,
+        }
+    }
+
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)

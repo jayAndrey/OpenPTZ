@@ -229,18 +229,85 @@ impl CameraDeviceImpl {
         ]
     }
 
-    fn send_uvc_cmd(&self, ctrl: &str, val: &str) {
-        if self.has_uvc_util {
-            let _ = Command::new("uvc-util")
-                .args(["-I", &self.device_index.to_string(), "-s", ctrl, val])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
+    fn send_uvc_cmd(&self, ctrl: &str, val: &str) -> Result<()> {
+        if !self.has_uvc_util {
+            bail!(
+                "PTZ unavailable on macOS: uvc-util not found; install it (https://github.com/jtfrey/uvc-util) and make sure it is on PATH"
+            );
+        }
+        let output = Command::new("uvc-util")
+            .args(["-I", &self.device_index.to_string(), "-s", ctrl, val])
+            .output()
+            .map_err(|e| {
+                anyhow::anyhow!("PTZ unavailable on macOS: failed to run uvc-util: {e}")
+            })?;
+        if !output.status.success() {
+            bail!(
+                "uvc-util failed to set {ctrl}={val} ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(())
+    }
+
+    /// Reads a control via `uvc-util -g` and returns the integers found after
+    /// the first '=' (or in the whole output when there is none).
+    fn read_uvc_ints(&self, ctrl: &str) -> Option<Vec<i32>> {
+        if !self.has_uvc_util {
+            return None;
+        }
+        let output = Command::new("uvc-util")
+            .args(["-I", &self.device_index.to_string(), "-g", ctrl])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let body = text.split_once('=').map(|(_, r)| r).unwrap_or(&text);
+        let mut nums = Vec::new();
+        let mut cur = String::new();
+        for c in body.chars().chain(std::iter::once(' ')) {
+            if c.is_ascii_digit() || (c == '-' && cur.is_empty()) {
+                cur.push(c);
+            } else {
+                if let Ok(n) = cur.parse::<i32>() {
+                    nums.push(n);
+                }
+                cur.clear();
+                if c == '-' {
+                    cur.push(c);
+                }
+            }
+        }
+        if nums.is_empty() {
+            None
+        } else {
+            Some(nums)
         }
     }
 
+    /// Reads pan and tilt with a single `uvc-util` call, updating both caches.
+    fn read_pan_tilt_deg(&self) -> (f32, f32) {
+        if let Some(v) = self.read_uvc_ints("pan-tilt-abs") {
+            if v.len() >= 2 {
+                let limits = self.profile.limits();
+                let pan = limits.pan_raw_to_deg(v[0]);
+                let tilt = limits.tilt_raw_to_deg(v[1]);
+                *self.cached_pan_deg.lock().unwrap() = pan;
+                *self.cached_tilt_deg.lock().unwrap() = tilt;
+                return (pan, tilt);
+            }
+        }
+        (
+            *self.cached_pan_deg.lock().unwrap(),
+            *self.cached_tilt_deg.lock().unwrap(),
+        )
+    }
+
     pub fn get_pan_deg(&self) -> Result<f32> {
-        Ok(*self.cached_pan_deg.lock().unwrap())
+        Ok(self.read_pan_tilt_deg().0)
     }
 
     pub fn set_pan_deg(&self, deg: f32) -> Result<()> {
@@ -248,8 +315,7 @@ impl CameraDeviceImpl {
         let min_deg = limits.pan_raw_to_deg(limits.pan_min);
         let max_deg = limits.pan_raw_to_deg(limits.pan_max);
         let clamped = deg.clamp(min_deg, max_deg);
-        *self.cached_pan_deg.lock().unwrap() = clamped;
-        let tilt = *self.cached_tilt_deg.lock().unwrap();
+        let tilt = self.get_tilt_deg()?;
         self.send_uvc_cmd(
             "pan-tilt-abs",
             &format!(
@@ -257,7 +323,8 @@ impl CameraDeviceImpl {
                 limits.deg_to_pan_raw(clamped),
                 limits.deg_to_tilt_raw(tilt)
             ),
-        );
+        )?;
+        *self.cached_pan_deg.lock().unwrap() = clamped;
         Ok(())
     }
 
@@ -274,7 +341,7 @@ impl CameraDeviceImpl {
     }
 
     pub fn get_tilt_deg(&self) -> Result<f32> {
-        Ok(*self.cached_tilt_deg.lock().unwrap())
+        Ok(self.read_pan_tilt_deg().1)
     }
 
     pub fn set_tilt_deg(&self, deg: f32) -> Result<()> {
@@ -282,8 +349,7 @@ impl CameraDeviceImpl {
         let min_deg = limits.tilt_raw_to_deg(limits.tilt_min);
         let max_deg = limits.tilt_raw_to_deg(limits.tilt_max);
         let clamped = deg.clamp(min_deg, max_deg);
-        *self.cached_tilt_deg.lock().unwrap() = clamped;
-        let pan = *self.cached_pan_deg.lock().unwrap();
+        let pan = self.get_pan_deg()?;
         self.send_uvc_cmd(
             "pan-tilt-abs",
             &format!(
@@ -291,7 +357,8 @@ impl CameraDeviceImpl {
                 limits.deg_to_pan_raw(pan),
                 limits.deg_to_tilt_raw(clamped)
             ),
-        );
+        )?;
+        *self.cached_tilt_deg.lock().unwrap() = clamped;
         Ok(())
     }
 
@@ -314,6 +381,11 @@ impl CameraDeviceImpl {
     }
 
     pub fn get_zoom_x(&self) -> Result<f32> {
+        if let Some(v) = self.read_uvc_ints("zoom-abs") {
+            let x = self.profile.limits().zoom_raw_to_x(v[0]);
+            *self.cached_zoom_x.lock().unwrap() = x;
+            return Ok(x);
+        }
         Ok(*self.cached_zoom_x.lock().unwrap())
     }
 
@@ -322,8 +394,8 @@ impl CameraDeviceImpl {
         let min_x = limits.zoom_raw_to_x(limits.zoom_min);
         let max_x = limits.zoom_raw_to_x(limits.zoom_max);
         let clamped = x.clamp(min_x, max_x);
+        self.send_uvc_cmd("zoom-abs", &limits.zoom_x_to_raw(clamped).to_string())?;
         *self.cached_zoom_x.lock().unwrap() = clamped;
-        self.send_uvc_cmd("zoom-abs", &limits.zoom_x_to_raw(clamped).to_string());
         Ok(())
     }
 
@@ -340,15 +412,15 @@ impl CameraDeviceImpl {
     }
 
     pub fn set_pan_speed(&self, _speed: i32) -> Result<()> {
-        Ok(())
+        bail!("Pan/tilt speed control is not supported on macOS")
     }
 
     pub fn set_tilt_speed(&self, _speed: i32) -> Result<()> {
-        Ok(())
+        bail!("Pan/tilt speed control is not supported on macOS")
     }
 
     pub fn stop_motion(&self) -> Result<()> {
-        Ok(())
+        bail!("Stop-motion is not supported on macOS (absolute positioning only)")
     }
 
     pub fn home(&self) -> Result<()> {
@@ -391,8 +463,8 @@ impl CameraDeviceImpl {
             60 => FLICKER_60HZ,
             _ => bail!("Invalid power line frequency: {} (choose 0, 50, or 60)", hz),
         };
+        self.send_uvc_cmd("power-line-frequency", &val.to_string())?;
         *self.power_line_freq.lock().unwrap() = Some(val);
-        self.send_uvc_cmd("power-line-frequency", &val.to_string());
         Ok(())
     }
 
@@ -416,8 +488,8 @@ impl CameraDeviceImpl {
 
     pub fn set_brightness(&self, val: i32) -> Result<()> {
         let clamped = val.clamp(0, 255);
+        self.send_uvc_cmd("brightness", &clamped.to_string())?;
         *self.brightness.lock().unwrap() = Some(clamped);
-        self.send_uvc_cmd("brightness", &clamped.to_string());
         Ok(())
     }
 
@@ -430,8 +502,8 @@ impl CameraDeviceImpl {
 
     pub fn set_contrast(&self, val: i32) -> Result<()> {
         let clamped = val.clamp(0, 255);
+        self.send_uvc_cmd("contrast", &clamped.to_string())?;
         *self.contrast.lock().unwrap() = Some(clamped);
-        self.send_uvc_cmd("contrast", &clamped.to_string());
         Ok(())
     }
 
@@ -444,8 +516,8 @@ impl CameraDeviceImpl {
 
     pub fn set_saturation(&self, val: i32) -> Result<()> {
         let clamped = val.clamp(0, 255);
+        self.send_uvc_cmd("saturation", &clamped.to_string())?;
         *self.saturation.lock().unwrap() = Some(clamped);
-        self.send_uvc_cmd("saturation", &clamped.to_string());
         Ok(())
     }
 
@@ -458,8 +530,8 @@ impl CameraDeviceImpl {
 
     pub fn set_sharpness(&self, val: i32) -> Result<()> {
         let clamped = val.clamp(0, 255);
+        self.send_uvc_cmd("sharpness", &clamped.to_string())?;
         *self.sharpness.lock().unwrap() = Some(clamped);
-        self.send_uvc_cmd("sharpness", &clamped.to_string());
         Ok(())
     }
 
@@ -472,8 +544,8 @@ impl CameraDeviceImpl {
 
     pub fn set_auto_exposure(&self, auto: bool) -> Result<()> {
         let val = if auto { 3 } else { 1 };
+        self.send_uvc_cmd("exposure-auto", &val.to_string())?;
         *self.auto_exposure.lock().unwrap() = Some(val);
-        self.send_uvc_cmd("exposure-auto", &val.to_string());
         Ok(())
     }
 
@@ -485,8 +557,8 @@ impl CameraDeviceImpl {
     }
 
     pub fn set_exposure_time(&self, val: i32) -> Result<()> {
+        self.send_uvc_cmd("exposure-time-abs", &val.to_string())?;
         *self.exposure_time.lock().unwrap() = Some(val);
-        self.send_uvc_cmd("exposure-time-abs", &val.to_string());
         Ok(())
     }
 
@@ -498,15 +570,14 @@ impl CameraDeviceImpl {
     }
 
     pub fn set_auto_focus(&self, auto: bool) -> Result<()> {
+        self.send_uvc_cmd("focus-auto", if auto { "1" } else { "0" })?;
         *self.auto_focus.lock().unwrap() = Some(auto);
-        self.send_uvc_cmd("focus-auto", if auto { "1" } else { "0" });
         Ok(())
     }
 
     pub fn get_status(&self) -> CameraStatus {
         let limits = self.profile.limits();
-        let pan_deg = self.get_pan_deg().unwrap_or(0.0);
-        let tilt_deg = self.get_tilt_deg().unwrap_or(0.0);
+        let (pan_deg, tilt_deg) = self.read_pan_tilt_deg();
         let zoom_x = self.get_zoom_x().unwrap_or(1.0);
 
         CameraStatus {

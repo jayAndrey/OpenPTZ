@@ -14,7 +14,7 @@ The core Linux driver (`src/v4l2/`) operates directly on `/dev/video*` character
 
 ## Core Conventions
 
-- **Rust Version**: 1.80+ (2021 edition).
+- **Rust Version**: 1.88+ (2021 edition).
 - **Toolchain Environment**: When invoking cargo via bash, ensure `~/.cargo/bin` is in `PATH` (`export PATH="$HOME/.cargo/bin:$PATH"`).
 - **Code Style & Formatting**: Standard `rustfmt`. Enforced via `cargo fmt --all -- --check`.
 - **Linting Standard**: Zero Clippy warnings across all targets. Enforced via `cargo clippy --all-targets -- -D warnings`.

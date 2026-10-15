@@ -196,10 +196,10 @@
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     }
 
-    video {
+    #webcamVideo {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
     }
 
     .video-placeholder {
@@ -851,15 +851,23 @@
     <div class="left-col">
       <!-- Live Video Card -->
       <div class="video-card" id="videoCard">
-        <video id="webcamVideo" autoplay playsinline muted></video>
+        <img id="webcamVideo" alt="Видеопоток с камеры OpenPTZ" style="display: none;" />
         <div class="video-placeholder" id="videoPlaceholder">
           <svg viewBox="0 0 24 24">
             <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
           </svg>
           <p id="placeholderText">Превью камеры Logitech Rally</p>
-          <button class="btn btn-primary" id="btnStartVideo">
-            <span id="startVideoBtnText">Включить превью</span>
-          </button>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px;">
+            <button class="btn btn-primary" id="btnStartVideo">
+              <span id="startVideoBtnText">Включить превью</span>
+            </button>
+            <button class="btn btn-secondary" id="btnWakeCamera">
+              <span>Разбудить камеру (0°)</span>
+            </button>
+          </div>
+          <div id="cameraHint" style="font-size: 12px; color: var(--text-muted); max-width: 380px; text-align: center; margin-top: 10px; line-height: 1.4;">
+            Изображение передаётся с камеры компьютера, на котором запущен OpenPTZ. Если камера припаркована вниз (-90°), нажмите «Разбудить камеру».
+          </div>
         </div>
 
         <div class="video-overlay" id="videoOverlay" style="display: none;">
@@ -871,14 +879,7 @@
               <div class="hud-badge" id="hudCoords">Pan: 0.0° | Tilt: 0.0° | 1.0x</div>
             </div>
             <div class="video-controls">
-              <select id="cameraSourceSelect" class="hud-select" title="Выбор камеры">
-                <option value="">Поиск камеры...</option>
-              </select>
-              <select id="resolutionSelect" class="hud-select" title="Разрешение">
-                <option value="1080" selected>1080p</option>
-                <option value="720">720p</option>
-                <option value="2160">4K</option>
-              </select>
+              <span class="hud-badge" id="videoSourceLabel">Камера OpenPTZ</span>
               <button class="btn btn-pill" id="btnSnapshot" title="Сделать снимок">📸 Снимок</button>
               <button class="btn btn-pill" id="btnToggleCrosshair" title="Прицел">🎯 Прицел</button>
               <button class="btn btn-pill" id="btnFullscreen" title="На весь экран">⛶</button>
@@ -1078,6 +1079,7 @@
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
+        document.getElementById('videoSourceLabel').textContent = data.card_name || 'Камера OpenPTZ';
         
         document.getElementById('devicePathLabel').textContent = `${data.card_name} (${data.device_path})`;
         document.getElementById('statusDot').style.background = 'var(--green)';
@@ -1362,151 +1364,50 @@
       apiPost(`/api/contrast?val=${e.target.value}`);
     });
 
-    // Live Video Stream (HTML5 / WebRTC getUserMedia)
+    // Live stream from the camera attached to the OpenPTZ server.
     const videoElem = document.getElementById('webcamVideo');
     const startVideoBtn = document.getElementById('btnStartVideo');
     const videoPlaceholder = document.getElementById('videoPlaceholder');
     const videoOverlay = document.getElementById('videoOverlay');
-    const cameraSelect = document.getElementById('cameraSourceSelect');
-    const resolutionSelect = document.getElementById('resolutionSelect');
     const btnSnapshot = document.getElementById('btnSnapshot');
+    let streamActive = false;
 
-    let currentStream = null;
-    let activeCameraDeviceId = null;
-    let selectedResolution = '1080';
-
-    function getConstraints(preferredDeviceId, resolution) {
-      let idealWidth = 1920;
-      let idealHeight = 1080;
-      if (resolution === '720') {
-        idealWidth = 1280; idealHeight = 720;
-      } else if (resolution === '2160') {
-        idealWidth = 3840; idealHeight = 2160;
-      }
-
-      if (preferredDeviceId) {
-        return {
-          video: {
-            deviceId: { exact: preferredDeviceId },
-            width: { ideal: idealWidth },
-            height: { ideal: idealHeight }
-          }
-        };
-      }
-      return {
-        video: {
-          width: { ideal: idealWidth },
-          height: { ideal: idealHeight }
-        }
-      };
-    }
-
-    async function startCamera(preferredDeviceId = null) {
+    async function startCamera() {
       const btnText = document.getElementById('startVideoBtnText');
       if (btnText) btnText.textContent = 'Подключение...';
-
-      try {
-        if (currentStream) {
-          currentStream.getTracks().forEach(t => t.stop());
-        }
-
-        let stream = null;
-        if (!preferredDeviceId) {
-          // Initial stream request to unlock devices & permissions
-          const initialStream = await navigator.mediaDevices.getUserMedia(getConstraints(null, selectedResolution));
-          
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-          // Look for Logitech Rally
-          const rally = videoDevices.find(d => {
-            const l = (d.label || '').toLowerCase();
-            return l.includes('rally') || (l.includes('logitech') && !l.includes('mic'));
-          });
-
-          if (rally) {
-            const activeTrack = initialStream.getVideoTracks()[0];
-            const activeLabel = activeTrack ? activeTrack.label.toLowerCase() : '';
-            if (!activeLabel.includes('rally')) {
-              initialStream.getTracks().forEach(t => t.stop());
-              stream = await navigator.mediaDevices.getUserMedia(getConstraints(rally.deviceId, selectedResolution));
-              activeCameraDeviceId = rally.deviceId;
-            } else {
-              stream = initialStream;
-              activeCameraDeviceId = rally.deviceId;
-            }
-          } else {
-            stream = initialStream;
-            const track = stream.getVideoTracks()[0];
-            if (track) activeCameraDeviceId = track.getSettings().deviceId;
-          }
-        } else {
-          stream = await navigator.mediaDevices.getUserMedia(getConstraints(preferredDeviceId, selectedResolution));
-          activeCameraDeviceId = preferredDeviceId;
-        }
-
-        currentStream = stream;
-        videoElem.srcObject = stream;
-        await videoElem.play().catch(() => {});
-
-        videoPlaceholder.style.display = 'none';
-        videoOverlay.style.display = 'flex';
-
-        await refreshCameraDevicesList();
-        showToast('Превью камеры активно');
-      } catch (err) {
-        console.warn('Camera preview init error:', err);
-        videoPlaceholder.style.display = 'flex';
-        if (btnText) btnText.textContent = 'Включить превью камеры';
-        showToast('Ошибка камеры: ' + err.message, true);
-      }
+      streamActive = false;
+      videoElem.style.display = 'none';
+      videoElem.src = `/api/video.mjpg?start=${Date.now()}`;
     }
 
-    async function refreshCameraDevicesList() {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        cameraSelect.innerHTML = '';
-
-        if (videoDevices.length === 0) {
-          cameraSelect.innerHTML = '<option value="">Камера не найдена</option>';
-          return;
-        }
-
-        videoDevices.forEach((dev, idx) => {
-          const opt = document.createElement('option');
-          opt.value = dev.deviceId;
-          const isRally = (dev.label || '').toLowerCase().includes('rally');
-          opt.textContent = `${isRally ? '🎥 ' : '📷 '}${dev.label || `Камера ${idx + 1}`}`;
-          if (dev.deviceId === activeCameraDeviceId || (isRally && !activeCameraDeviceId)) {
-            opt.selected = true;
-          }
-          cameraSelect.appendChild(opt);
-        });
-      } catch (e) {}
-    }
-
-    // Switch camera source from dropdown
-    cameraSelect.addEventListener('change', (e) => {
-      activeCameraDeviceId = e.target.value;
-      startCamera(activeCameraDeviceId);
+    videoElem.addEventListener('load', () => {
+      if (streamActive) return;
+      streamActive = true;
+      videoElem.style.display = 'block';
+      videoPlaceholder.style.display = 'none';
+      videoOverlay.style.display = 'flex';
+      showToast('Превью камеры активно');
     });
 
-    // Switch resolution
-    resolutionSelect.addEventListener('change', (e) => {
-      selectedResolution = e.target.value;
-      startCamera(activeCameraDeviceId);
+    videoElem.addEventListener('error', async () => {
+      streamActive = false;
+      videoElem.style.display = 'none';
+      videoOverlay.style.display = 'none';
+      videoPlaceholder.style.display = 'flex';
+      const status = await fetch('/api/video/status').then(res => res.json()).catch(() => null);
+      const message = status?.error || 'Не удалось получить видеопоток с сервера';
+      showToast('Ошибка камеры: ' + message, true);
     });
 
     // Snapshot feature
     btnSnapshot.addEventListener('click', () => {
-      if (!videoElem.videoWidth) {
+      if (!videoElem.naturalWidth) {
         showToast('Видеопоток не готов', true);
         return;
       }
       const canvas = document.createElement('canvas');
-      canvas.width = videoElem.videoWidth;
-      canvas.height = videoElem.videoHeight;
+      canvas.width = videoElem.naturalWidth;
+      canvas.height = videoElem.naturalHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(videoElem, 0, 0, canvas.width, canvas.height);
 
@@ -1556,6 +1457,22 @@
       startCamera();
     });
 
+    const btnWakeCamera = document.getElementById('btnWakeCamera');
+    if (btnWakeCamera) {
+      btnWakeCamera.addEventListener('click', async () => {
+        try {
+          showToast('Разбуживание камеры...');
+          await apiPost('/api/wake');
+          await apiPost('/api/home');
+          showToast('Камера вернулась в положение (0°, 0°)');
+          await refreshStatus();
+          startCamera();
+        } catch (e) {
+          showToast('Ошибка разбуживания: ' + e.message, true);
+        }
+      });
+    }
+
     // Crosshair & Fullscreen
     document.getElementById('btnToggleCrosshair').addEventListener('click', () => {
       const ch = document.getElementById('crosshairOverlay');
@@ -1604,9 +1521,8 @@
     });
 
     // Init
-    refreshStatus();
+    refreshStatus().then(() => startCamera());
     loadPresets();
-    startCamera(); // Auto-start camera preview immediately on load
     setInterval(refreshStatus, 2000);
   </script>
 </body>

@@ -2,9 +2,11 @@ mod api;
 pub mod camera;
 pub mod cameras;
 mod cli;
+mod desktop;
 mod presets;
 mod tui;
 mod v4l2;
+mod video;
 
 use anyhow::Result;
 use clap::Parser;
@@ -36,8 +38,12 @@ fn main() -> Result<()> {
 
     // 4. Dispatch standard commands
     match args.command {
-        Some(Commands::Ui { port, no_browser }) | Some(Commands::Gui { port, no_browser }) => {
-            launch_gui(device, port, no_browser)?;
+        Some(Commands::Ui { port, no_browser }) => {
+            launch_web_ui(device, port, no_browser)?;
+        }
+
+        Some(Commands::Gui) => {
+            desktop::run(device)?;
         }
 
         None | Some(Commands::Tui) => {
@@ -111,13 +117,117 @@ fn main() -> Result<()> {
             server.run()?;
         }
 
+        Some(Commands::TestMotion) => {
+            run_motion_diagnostics(&device)?;
+        }
+
         Some(Commands::List) => unreachable!(),
     }
 
     Ok(())
 }
 
-fn launch_gui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
+fn run_motion_diagnostics(device: &CameraDevice) -> Result<()> {
+    println!("\n=======================================================");
+    println!("       OpenPTZ Physical Motion & Camera Diagnostics    ");
+    println!("=======================================================\n");
+
+    let status = device.get_status();
+    println!("📷 Camera:       {}", status.card_name);
+    println!("📍 Device Path:  {}", status.device_path);
+    println!("🎯 Profile:      {}", device.profile.name());
+
+    let initial_pan = device.get_pan_deg()?;
+    let initial_tilt = device.get_tilt_deg()?;
+    let initial_zoom = device.get_zoom_x()?;
+
+    println!("\n[1/5] Initial Position Check:");
+    println!(
+        "      Pan: {:+.1}°, Tilt: {:+.1}°, Zoom: {:.1}x",
+        initial_pan, initial_tilt, initial_zoom
+    );
+
+    // If camera is parked in privacy mode (tilt <= -80.0°), wake it up
+    if initial_tilt <= -80.0 {
+        println!("\n⚠️  Camera lens is in privacy park mode (-90°). Waking up...");
+        device.wake_privacy()?;
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let wake_tilt = device.get_tilt_deg()?;
+        println!("      Woken up! Tilt is now: {:+.1}°", wake_tilt);
+    }
+
+    println!("\n[2/5] Testing Pan Motion:");
+    println!("      -> Moving Pan Right (+15.0°)...");
+    device.pan_relative(15.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let pan_pos1 = device.get_pan_deg()?;
+    println!("      Current Pan: {:+.1}°", pan_pos1);
+
+    println!("      -> Moving Pan Left (-30.0°)...");
+    device.pan_relative(-30.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let pan_pos2 = device.get_pan_deg()?;
+    println!("      Current Pan: {:+.1}°", pan_pos2);
+
+    println!("      -> Returning Pan to Center (0.0°)...");
+    device.set_pan_deg(0.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    println!("\n[3/5] Testing Tilt Motion:");
+    println!("      -> Moving Tilt Up (+15.0°)...");
+    device.tilt_relative(15.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let tilt_pos1 = device.get_tilt_deg()?;
+    println!("      Current Tilt: {:+.1}°", tilt_pos1);
+
+    println!("      -> Moving Tilt Down (-15.0°)...");
+    device.tilt_relative(-15.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let tilt_pos2 = device.get_tilt_deg()?;
+    println!("      Current Tilt: {:+.1}°", tilt_pos2);
+
+    println!("      -> Returning Tilt to Horizon (0.0°)...");
+    device.set_tilt_deg(0.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    println!("\n[4/5] Testing Optical Zoom:");
+    println!("      -> Zooming in to 2.5x...");
+    device.set_zoom_x(2.5)?;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let zoom_pos1 = device.get_zoom_x()?;
+    println!("      Current Zoom: {:.1}x", zoom_pos1);
+
+    println!("      -> Zooming out to 1.0x (Wide)...");
+    device.set_zoom_x(1.0)?;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let zoom_pos2 = device.get_zoom_x()?;
+    println!("      Current Zoom: {:.1}x", zoom_pos2);
+
+    println!("\n[5/5] Resetting to Home Position...");
+    device.goto_home()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let final_pan = device.get_pan_deg()?;
+    let final_tilt = device.get_tilt_deg()?;
+    let final_zoom = device.get_zoom_x()?;
+    println!(
+        "      Final Position: Pan: {:+.1}°, Tilt: {:+.1}°, Zoom: {:.1}x",
+        final_pan, final_tilt, final_zoom
+    );
+
+    println!("\n✅ All PTZ camera motion diagnostics completed successfully!\n");
+    Ok(())
+}
+
+fn launch_web_ui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
+    // Automatically wake up camera from privacy park mode (-90°)
+    if let Ok(tilt) = device.get_tilt_deg() {
+        if tilt <= -80.0 {
+            println!("📷 Waking Logitech Rally from privacy parking (-90°)...");
+            let _ = device.wake_privacy();
+        }
+    }
+
     if !no_browser {
         let p = port;
         std::thread::spawn(move || {
@@ -138,7 +248,6 @@ fn open_browser(url: &str) {
         // Try Microsoft Edge or Chrome in app mode first
         let edge_res = std::process::Command::new("msedge")
             .arg(format!("--app={}", url))
-            .arg("--use-fake-ui-for-media-stream")
             .arg("--autoplay-policy=no-user-gesture-required")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -147,7 +256,6 @@ fn open_browser(url: &str) {
         if edge_res.is_err() {
             let chrome_res = std::process::Command::new("chrome")
                 .arg(format!("--app={}", url))
-                .arg("--use-fake-ui-for-media-stream")
                 .arg("--autoplay-policy=no-user-gesture-required")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -169,7 +277,6 @@ fn open_browser(url: &str) {
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         )
         .arg(format!("--app={}", url))
-        .arg("--use-fake-ui-for-media-stream")
         .arg("--autoplay-policy=no-user-gesture-required")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -188,7 +295,6 @@ fn open_browser(url: &str) {
     {
         let chrome_res = std::process::Command::new("google-chrome")
             .arg(format!("--app={}", url))
-            .arg("--use-fake-ui-for-media-stream")
             .arg("--autoplay-policy=no-user-gesture-required")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

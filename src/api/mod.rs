@@ -6,20 +6,24 @@ use tiny_http::{Header, Response, Server, StatusCode};
 
 use crate::presets::PresetManager;
 use crate::v4l2::CameraDevice;
+use crate::video::{MjpegReader, VideoHub};
 
 const INDEX_HTML: &str = include_str!("web/index.html");
 
 pub struct ApiServer {
     device: Arc<Mutex<CameraDevice>>,
     preset_mgr: Arc<Mutex<PresetManager>>,
+    video: Arc<VideoHub>,
     port: u16,
 }
 
 impl ApiServer {
     pub fn new(device: CameraDevice, port: u16) -> Self {
+        let status = device.get_status();
         Self {
             device: Arc::new(Mutex::new(device)),
             preset_mgr: Arc::new(Mutex::new(PresetManager::load())),
+            video: VideoHub::start(status.device_path, status.card_name, false),
             port,
         }
     }
@@ -51,6 +55,48 @@ impl ApiServer {
                 Some((p, q)) => (p.to_string(), q.to_string()),
                 None => (url, String::new()),
             };
+
+            if method == "GET" && path == "/api/video.mjpg" {
+                let hub = Arc::clone(&self.video);
+                std::thread::spawn(move || {
+                    let content_type = Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"multipart/x-mixed-replace; boundary=frame"[..],
+                    )
+                    .expect("static multipart content type");
+                    let cache = Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..])
+                        .expect("static cache header");
+                    let response = Response::new(
+                        StatusCode(200),
+                        vec![content_type, cache],
+                        MjpegReader::new(hub),
+                        None,
+                        None,
+                    );
+                    let _ = request.respond(response);
+                });
+                continue;
+            }
+
+            if method == "GET" && path == "/api/video/status" {
+                let (_, frame, error) = self.video.latest();
+                let (format, nominal_fps) = self.video.format_info();
+                let body = serde_json::json!({
+                    "ready": frame.is_some(),
+                    "width": frame.as_ref().map(|f| f.width),
+                    "height": frame.as_ref().map(|f| f.height),
+                    "fps": self.video.fps(),
+                    "format": format,
+                    "nominal_fps": nominal_fps,
+                    "error": error,
+                });
+                let response = Response::from_string(body.to_string()).with_header(
+                    Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .expect("static JSON content type"),
+                );
+                let _ = request.respond(response);
+                continue;
+            }
 
             let query_params: HashMap<String, String> = query_str
                 .split('&')
@@ -125,6 +171,24 @@ impl ApiServer {
 
         if method == "POST" || method == "GET" {
             match path {
+                "/api/log" => {
+                    if let Some(msg) = params.get("msg") {
+                        eprintln!("[CLIENT LOG] {}", msg);
+                    }
+                    return (200, "application/json", r#"{"status":"ok"}"#.to_string());
+                }
+
+                "/api/wake" => {
+                    return match camera.wake_privacy() {
+                        Ok(()) => (
+                            200,
+                            "application/json",
+                            r#"{"status":"ok","action":"wake"}"#.to_string(),
+                        ),
+                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                    };
+                }
+
                 "/api/home" => {
                     return match camera.goto_home() {
                         Ok(()) => (
