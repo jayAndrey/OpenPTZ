@@ -2,13 +2,14 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use serde_json::Value;
 
 use crate::camera::constants::*;
 use crate::camera::types::*;
+use crate::cameras::CameraProfile;
 
 pub struct CameraDeviceImpl {
     path: PathBuf,
@@ -16,6 +17,7 @@ pub struct CameraDeviceImpl {
     device_index: usize,
     has_rally_xu: bool,
     has_uvc_util: bool,
+    pub profile: Arc<dyn CameraProfile>,
     cached_pan_deg: Mutex<f32>,
     cached_tilt_deg: Mutex<f32>,
     cached_zoom_x: Mutex<f32>,
@@ -132,13 +134,17 @@ impl CameraDeviceImpl {
             ));
 
         let has_uvc = check_uvc_util();
+        let profile = crate::cameras::detect_profile(&matched.card_name, None);
+        let has_rally_xu = profile.capabilities().vendor_name == "Logitech"
+            || matched.card_name.to_lowercase().contains("rally");
 
         Ok(Self {
             path: matched.path,
             card_name: matched.card_name,
             device_index: idx,
-            has_rally_xu: matched.is_rally,
+            has_rally_xu,
             has_uvc_util: has_uvc,
+            profile,
             cached_pan_deg: Mutex::new(0.0),
             cached_tilt_deg: Mutex::new(0.0),
             cached_zoom_x: Mutex::new(1.0),
@@ -178,41 +184,47 @@ impl CameraDeviceImpl {
         &self.path
     }
 
+    pub fn is_rally(&self) -> bool {
+        self.profile.capabilities().vendor_name == "Logitech"
+            || self.card_name.to_lowercase().contains("rally")
+    }
+
     pub fn has_rally_xu(&self) -> bool {
         self.has_rally_xu
     }
 
     pub fn query_all_ctrls(&self) -> Vec<ControlInfo> {
+        let limits = self.profile.limits();
         vec![
             ControlInfo {
                 id: 1,
                 name: "Pan (Absolute)".to_string(),
                 ctrl_type: 1,
-                min: RALLY_PAN_MIN,
-                max: RALLY_PAN_MAX,
-                step: RALLY_PAN_STEP,
+                min: limits.pan_min,
+                max: limits.pan_max,
+                step: limits.pan_step,
                 default_val: 0,
-                current_val: Some(deg_to_raw(*self.cached_pan_deg.lock().unwrap())),
+                current_val: Some(limits.deg_to_pan_raw(*self.cached_pan_deg.lock().unwrap())),
             },
             ControlInfo {
                 id: 2,
                 name: "Tilt (Absolute)".to_string(),
                 ctrl_type: 1,
-                min: RALLY_TILT_MIN,
-                max: RALLY_TILT_MAX,
-                step: RALLY_TILT_STEP,
+                min: limits.tilt_min,
+                max: limits.tilt_max,
+                step: limits.tilt_step,
                 default_val: 0,
-                current_val: Some(deg_to_raw(*self.cached_tilt_deg.lock().unwrap())),
+                current_val: Some(limits.deg_to_tilt_raw(*self.cached_tilt_deg.lock().unwrap())),
             },
             ControlInfo {
                 id: 3,
                 name: "Zoom (Absolute)".to_string(),
                 ctrl_type: 1,
-                min: RALLY_ZOOM_MIN,
-                max: RALLY_ZOOM_MAX,
-                step: RALLY_ZOOM_STEP,
-                default_val: 100,
-                current_val: Some(zoom_x_to_raw(*self.cached_zoom_x.lock().unwrap())),
+                min: limits.zoom_min,
+                max: limits.zoom_max,
+                step: limits.zoom_step,
+                default_val: limits.zoom_min,
+                current_val: Some(limits.zoom_x_to_raw(*self.cached_zoom_x.lock().unwrap())),
             },
         ]
     }
@@ -232,14 +244,26 @@ impl CameraDeviceImpl {
     }
 
     pub fn set_pan_deg(&self, deg: f32) -> Result<()> {
-        let clamped = deg.clamp(-90.0, 90.0);
+        let limits = self.profile.limits();
+        let min_deg = limits.pan_raw_to_deg(limits.pan_min);
+        let max_deg = limits.pan_raw_to_deg(limits.pan_max);
+        let clamped = deg.clamp(min_deg, max_deg);
         *self.cached_pan_deg.lock().unwrap() = clamped;
         let tilt = *self.cached_tilt_deg.lock().unwrap();
         self.send_uvc_cmd(
             "pan-tilt-abs",
-            &format!("{},{}", deg_to_raw(clamped), deg_to_raw(tilt)),
+            &format!(
+                "{},{}",
+                limits.deg_to_pan_raw(clamped),
+                limits.deg_to_tilt_raw(tilt)
+            ),
         );
         Ok(())
+    }
+
+    #[inline]
+    pub fn pan_to_deg(&self, deg: f32) -> Result<()> {
+        self.set_pan_deg(deg)
     }
 
     pub fn pan_relative(&self, delta_deg: f32) -> Result<f32> {
@@ -254,14 +278,26 @@ impl CameraDeviceImpl {
     }
 
     pub fn set_tilt_deg(&self, deg: f32) -> Result<()> {
-        let clamped = deg.clamp(-90.0, 50.0);
+        let limits = self.profile.limits();
+        let min_deg = limits.tilt_raw_to_deg(limits.tilt_min);
+        let max_deg = limits.tilt_raw_to_deg(limits.tilt_max);
+        let clamped = deg.clamp(min_deg, max_deg);
         *self.cached_tilt_deg.lock().unwrap() = clamped;
         let pan = *self.cached_pan_deg.lock().unwrap();
         self.send_uvc_cmd(
             "pan-tilt-abs",
-            &format!("{},{}", deg_to_raw(pan), deg_to_raw(clamped)),
+            &format!(
+                "{},{}",
+                limits.deg_to_pan_raw(pan),
+                limits.deg_to_tilt_raw(clamped)
+            ),
         );
         Ok(())
+    }
+
+    #[inline]
+    pub fn tilt_to_deg(&self, deg: f32) -> Result<()> {
+        self.set_tilt_deg(deg)
     }
 
     pub fn tilt_relative(&self, delta_deg: f32) -> Result<f32> {
@@ -282,10 +318,18 @@ impl CameraDeviceImpl {
     }
 
     pub fn set_zoom_x(&self, x: f32) -> Result<()> {
-        let clamped = x.clamp(1.0, 15.0);
+        let limits = self.profile.limits();
+        let min_x = limits.zoom_raw_to_x(limits.zoom_min);
+        let max_x = limits.zoom_raw_to_x(limits.zoom_max);
+        let clamped = x.clamp(min_x, max_x);
         *self.cached_zoom_x.lock().unwrap() = clamped;
-        self.send_uvc_cmd("zoom-abs", &zoom_x_to_raw(clamped).to_string());
+        self.send_uvc_cmd("zoom-abs", &limits.zoom_x_to_raw(clamped).to_string());
         Ok(())
+    }
+
+    #[inline]
+    pub fn zoom_to(&self, x: f32) -> Result<()> {
+        self.set_zoom_x(x)
     }
 
     pub fn zoom_relative(&self, delta_x: f32) -> Result<f32> {
@@ -307,11 +351,33 @@ impl CameraDeviceImpl {
         Ok(())
     }
 
-    pub fn goto_home(&self) -> Result<()> {
+    pub fn home(&self) -> Result<()> {
         self.set_pan_deg(0.0)?;
         self.set_tilt_deg(0.0)?;
         self.set_zoom_x(1.0)?;
         Ok(())
+    }
+
+    #[inline]
+    pub fn goto_home(&self) -> Result<()> {
+        self.home()
+    }
+
+    pub fn recall_hardware_preset(&self, _preset_num: u8) -> Result<()> {
+        anyhow::bail!("Hardware EEPROM presets not supported via generic macOS driver")
+    }
+
+    pub fn save_hardware_preset(&self, _preset_num: u8) -> Result<()> {
+        anyhow::bail!("Hardware EEPROM presets not supported via generic macOS driver")
+    }
+
+    pub fn sleep_privacy(&self) -> Result<()> {
+        self.set_tilt_deg(-90.0)?;
+        Ok(())
+    }
+
+    pub fn wake_privacy(&self) -> Result<()> {
+        self.home()
     }
 
     pub fn get_power_line_frequency(&self) -> Result<i32> {
@@ -438,6 +504,7 @@ impl CameraDeviceImpl {
     }
 
     pub fn get_status(&self) -> CameraStatus {
+        let limits = self.profile.limits();
         let pan_deg = self.get_pan_deg().unwrap_or(0.0);
         let tilt_deg = self.get_tilt_deg().unwrap_or(0.0);
         let zoom_x = self.get_zoom_x().unwrap_or(1.0);
@@ -446,11 +513,11 @@ impl CameraDeviceImpl {
             device_path: self.path.to_string_lossy().to_string(),
             card_name: self.card_name.clone(),
             pan_deg,
-            pan_raw: deg_to_raw(pan_deg),
+            pan_raw: limits.deg_to_pan_raw(pan_deg),
             tilt_deg,
-            tilt_raw: deg_to_raw(tilt_deg),
+            tilt_raw: limits.deg_to_tilt_raw(tilt_deg),
             zoom_x,
-            zoom_raw: zoom_x_to_raw(zoom_x),
+            zoom_raw: limits.zoom_x_to_raw(zoom_x),
             brightness: self.get_brightness().ok(),
             contrast: self.get_contrast().ok(),
             saturation: self.get_saturation().ok(),

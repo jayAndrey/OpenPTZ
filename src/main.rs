@@ -1,5 +1,6 @@
 mod api;
 pub mod camera;
+pub mod cameras;
 mod cli;
 mod presets;
 mod tui;
@@ -49,7 +50,7 @@ fn main() -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             } else {
-                print_status_table(&status, device.has_rally_xu());
+                print_status_table(&status, device.profile.name(), device.has_rally_xu());
             }
         }
 
@@ -232,8 +233,9 @@ fn list_devices() {
     println!("{:-<75}", "");
 }
 
-fn print_status_table(status: &v4l2::CameraStatus, has_xu: bool) {
+fn print_status_table(status: &v4l2::CameraStatus, profile_name: &str, has_xu: bool) {
     println!("\n🎥 Camera Status: {}", status.card_name);
+    println!("   Profile:       {}", profile_name);
     println!("   Device Path:   {}", status.device_path);
     println!(
         "   Logitech XU:   {}",
@@ -350,6 +352,12 @@ fn handle_presets(device: &CameraDevice, args: PresetArgs) -> Result<()> {
 
     if let Some(p) = args.recall {
         println!("Recalling Preset {}...", p);
+        if device.profile.capabilities().has_hardware_presets && device.has_rally_xu() {
+            if let Ok(()) = device.recall_hardware_preset(p) {
+                println!("Camera moved to Hardware Preset {} (via camera EEPROM).", p);
+                return Ok(());
+            }
+        }
         match pm.recall_slot(p, device) {
             Ok(preset) => {
                 println!(
@@ -366,6 +374,14 @@ fn handle_presets(device: &CameraDevice, args: PresetArgs) -> Result<()> {
 
     if let Some(p) = args.save {
         println!("Saving current position to Preset {}...", p);
+        if device.profile.capabilities().has_hardware_presets && device.has_rally_xu() {
+            if let Ok(()) = device.save_hardware_preset(p) {
+                println!(
+                    "Saved position to Hardware Preset {} (via camera EEPROM).",
+                    p
+                );
+            }
+        }
         let preset = pm.save_slot(p, device)?;
         println!(
             "Saved position to Preset {}: Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
