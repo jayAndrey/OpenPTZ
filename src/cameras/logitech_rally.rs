@@ -1,10 +1,16 @@
 use anyhow::{bail, Context, Result};
+#[cfg(unix)]
 use std::os::unix::io::RawFd;
+#[cfg(not(unix))]
+type RawFd = i32;
 
 use super::traits::{CameraCapabilities, CameraProfile, PtzLimits};
+
+#[cfg(target_os = "linux")]
 use crate::v4l2::constants::{
     V4L2_CID_PAN_ABSOLUTE, V4L2_CID_TILT_ABSOLUTE, V4L2_CID_ZOOM_ABSOLUTE,
 };
+#[cfg(target_os = "linux")]
 use crate::v4l2::ioctl::{
     ioctl_call, UvcXuControlQuery, V4l2Control, UVCIOC_CTRL_QUERY, UVC_SET_CUR, VIDIOC_S_CTRL,
 };
@@ -99,31 +105,47 @@ impl LogitechRallyProfile {
             );
         }
 
-        let mut val = cmd;
-        let mut query = UvcXuControlQuery {
-            unit: LOGI_XU_PERIPHERAL_UNIT_ID,
-            selector: XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL,
-            query: UVC_SET_CUR,
-            size: 1,
-            data: &mut val as *mut u8,
-        };
+        #[cfg(target_os = "linux")]
+        {
+            let mut val = cmd;
+            let mut query = UvcXuControlQuery {
+                unit: LOGI_XU_PERIPHERAL_UNIT_ID,
+                selector: XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL,
+                query: UVC_SET_CUR,
+                size: 1,
+                data: &mut val as *mut u8,
+            };
 
-        unsafe {
-            ioctl_call(raw_fd, UVCIOC_CTRL_QUERY, &mut query).with_context(|| {
-                format!("Failed to send Logitech XU Selector 2 command {}", cmd)
-            })?;
+            unsafe {
+                ioctl_call(raw_fd, UVCIOC_CTRL_QUERY, &mut query).with_context(|| {
+                    format!("Failed to send Logitech XU Selector 2 command {}", cmd)
+                })?;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = raw_fd;
         }
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn set_v4l2_control(&self, raw_fd: RawFd, cid: u32, val: i32) -> Result<()> {
-        let mut ctrl = V4l2Control {
-            id: cid,
-            value: val,
-        };
-        unsafe {
-            ioctl_call(raw_fd, VIDIOC_S_CTRL, &mut ctrl)
-                .with_context(|| format!("Failed to set V4L2 control 0x{:08x} to {}", cid, val))?;
+        #[cfg(target_os = "linux")]
+        {
+            let mut ctrl = V4l2Control {
+                id: cid,
+                value: val,
+            };
+            unsafe {
+                ioctl_call(raw_fd, VIDIOC_S_CTRL, &mut ctrl).with_context(|| {
+                    format!("Failed to set V4L2 control 0x{:08x} to {}", cid, val)
+                })?;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (raw_fd, cid, val);
         }
         Ok(())
     }
@@ -176,10 +198,17 @@ impl CameraProfile for LogitechRallyProfile {
     }
 
     fn home(&self, raw_fd: RawFd) -> Result<()> {
-        let _ = self.execute_xu_cmd(raw_fd, LOGI_XU_CMD_HOME);
-        let _ = self.set_v4l2_control(raw_fd, V4L2_CID_PAN_ABSOLUTE, 0);
-        let _ = self.set_v4l2_control(raw_fd, V4L2_CID_TILT_ABSOLUTE, 0);
-        let _ = self.set_v4l2_control(raw_fd, V4L2_CID_ZOOM_ABSOLUTE, RALLY_ZOOM_MIN);
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.execute_xu_cmd(raw_fd, LOGI_XU_CMD_HOME);
+            let _ = self.set_v4l2_control(raw_fd, V4L2_CID_PAN_ABSOLUTE, 0);
+            let _ = self.set_v4l2_control(raw_fd, V4L2_CID_TILT_ABSOLUTE, 0);
+            let _ = self.set_v4l2_control(raw_fd, V4L2_CID_ZOOM_ABSOLUTE, RALLY_ZOOM_MIN);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = raw_fd;
+        }
         Ok(())
     }
 
@@ -206,10 +235,16 @@ impl CameraProfile for LogitechRallyProfile {
     }
 
     fn sleep_privacy(&self, raw_fd: RawFd) -> Result<()> {
-        // Tilt lens fully downward into the base (-90.0°), center pan, reset zoom
-        let _ = self.set_v4l2_control(raw_fd, V4L2_CID_PAN_ABSOLUTE, 0);
-        self.set_v4l2_control(raw_fd, V4L2_CID_TILT_ABSOLUTE, RALLY_TILT_MIN)?;
-        let _ = self.set_v4l2_control(raw_fd, V4L2_CID_ZOOM_ABSOLUTE, RALLY_ZOOM_MIN);
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.set_v4l2_control(raw_fd, V4L2_CID_PAN_ABSOLUTE, 0);
+            self.set_v4l2_control(raw_fd, V4L2_CID_TILT_ABSOLUTE, RALLY_TILT_MIN)?;
+            let _ = self.set_v4l2_control(raw_fd, V4L2_CID_ZOOM_ABSOLUTE, RALLY_ZOOM_MIN);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = raw_fd;
+        }
         Ok(())
     }
 

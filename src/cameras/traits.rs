@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
+
+#[cfg(unix)]
 use std::os::unix::io::RawFd;
+#[cfg(not(unix))]
+pub type RawFd = i32;
 
 /// PTZ coordinate limits and mapping functions.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

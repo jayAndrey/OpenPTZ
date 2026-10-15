@@ -1,0 +1,166 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  OpenPTZ Windows Installer (WiX v3) Definition
+  Builds native .msi package compatible with cargo-wix and GitHub Actions.
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+    <Product
+        Id='*'
+        Name='OpenPTZ'
+        UpgradeCode='1B65787F-B637-4AEB-B220-3463684B69A9'
+        Manufacturer='andryjay'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package
+            Id='*'
+            Keywords='Installer,PTZ,Camera,V4L2,DirectShow'
+            Description='OpenPTZ Camera Control Suite'
+            Comments='High-performance PTZ camera control suite for Windows, Linux &amp; macOS'
+            Manufacturer='andryjay'
+            InstallerVersion='301'
+            Languages='1033'
+            Compressed='yes'
+            SummaryCodepage='1252'
+            Platform='x64'
+            InstallScope='perMachine'
+        />
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <MediaTemplate EmbedCab='yes'/>
+
+        <Icon Id='ProductICO' SourceFile='assets/openptz.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/jayAndrey/OpenPTZ'/>
+        <Property Id='ARPURLINFOABOUT' Value='https://github.com/jayAndrey/OpenPTZ'/>
+
+        <!-- Directory Structure -->
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='OpenPTZ'>
+                    <!-- Main executable -->
+                    <Component Id='MainExecutable' Guid='2EC4BD25-61F7-44AF-84AE-4F9382EA73AD' Win64='yes'>
+                        <File
+                            Id='openptz.exe'
+                            Name='openptz.exe'
+                            DiskId='1'
+                            Source='target/release/openptz.exe'
+                            KeyPath='yes'/>
+                    </Component>
+
+                    <!-- Icon file in app dir -->
+                    <Component Id='AppIcon' Guid='2A98FC90-4608-4099-AB20-10E44257C4C1' Win64='yes'>
+                        <File
+                            Id='openptz.ico'
+                            Name='openptz.ico'
+                            DiskId='1'
+                            Source='assets/openptz.ico'
+                            KeyPath='yes'/>
+                    </Component>
+
+                    <!-- Documentation and licenses -->
+                    <Component Id='DocFiles' Guid='E7D9B66D-7EFD-405D-AFE2-8449B9B12B38' Win64='yes'>
+                        <File Id='Readme' Name='README.md' DiskId='1' Source='README.md' KeyPath='yes'/>
+                        <File Id='LicenseMit' Name='LICENSE-MIT' DiskId='1' Source='LICENSE-MIT'/>
+                        <File Id='LicenseApache' Name='LICENSE-APACHE' DiskId='1' Source='LICENSE-APACHE'/>
+                    </Component>
+
+                    <!-- System PATH modification -->
+                    <Component Id='PathEnv' Guid='F1EB2729-5F63-4DBD-8ACD-FBFCD0F89A1D' Win64='yes' KeyPath='yes'>
+                        <Environment
+                            Id='PATH'
+                            Name='PATH'
+                            Value='[APPLICATIONFOLDER]'
+                            Permanent='no'
+                            Part='last'
+                            Action='set'
+                            System='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <!-- Start Menu Shortcuts -->
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder' Name='OpenPTZ'>
+                    <Component Id='ApplicationShortcuts' Guid='74E37A8B-22DF-4399-A6BE-C6CE36B04423' Win64='yes'>
+                        <Shortcut
+                            Id='WebGuiShortcut'
+                            Name='OpenPTZ Web GUI'
+                            Description='Launch OpenPTZ Web Interface and Video Stream'
+                            Target='[APPLICATIONFOLDER]openptz.exe'
+                            Arguments='ui'
+                            WorkingDirectory='APPLICATIONFOLDER'
+                            Icon='ProductICO'/>
+                        <Shortcut
+                            Id='TuiShortcut'
+                            Name='OpenPTZ Terminal UI'
+                            Description='Launch OpenPTZ Terminal Interface'
+                            Target='[APPLICATIONFOLDER]openptz.exe'
+                            Arguments='tui'
+                            WorkingDirectory='APPLICATIONFOLDER'
+                            Icon='ProductICO'/>
+                        <Shortcut
+                            Id='UninstallShortcut'
+                            Name='Uninstall OpenPTZ'
+                            Description='Uninstall OpenPTZ from this computer'
+                            Target='[System64Folder]msiexec.exe'
+                            Arguments='/x [ProductCode]'/>
+                        <RemoveFolder Id='CleanUpShortcuts' Directory='ApplicationProgramsFolder' On='uninstall'/>
+                        <RegistryValue
+                            Root='HKCU'
+                            Key='Software\andryjay\OpenPTZ'
+                            Name='ShortcutsInstalled'
+                            Type='integer'
+                            Value='1'
+                            KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <!-- Desktop Shortcut -->
+            <Directory Id='DesktopFolder' Name='Desktop'>
+                <Component Id='DesktopShortcutComponent' Guid='36BCFA3D-7B5A-4B7E-AE50-6126E50A0B1A' Win64='yes'>
+                    <Shortcut
+                        Id='DesktopWebGuiShortcut'
+                        Name='OpenPTZ Web GUI'
+                        Description='Launch OpenPTZ Web Interface and Video Stream'
+                        Target='[APPLICATIONFOLDER]openptz.exe'
+                        Arguments='ui'
+                        WorkingDirectory='APPLICATIONFOLDER'
+                        Icon='ProductICO'/>
+                    <RegistryValue
+                        Root='HKCU'
+                        Key='Software\andryjay\OpenPTZ'
+                        Name='DesktopShortcutInstalled'
+                        Type='integer'
+                        Value='1'
+                        KeyPath='yes'/>
+                </Component>
+            </Directory>
+        </Directory>
+
+        <!-- Feature Tree -->
+        <Feature
+            Id='Complete'
+            Title='OpenPTZ'
+            Description='The complete OpenPTZ package including binaries, shortcuts, and documentation.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'>
+            <ComponentRef Id='MainExecutable'/>
+            <ComponentRef Id='AppIcon'/>
+            <ComponentRef Id='DocFiles'/>
+            <ComponentRef Id='PathEnv'/>
+            <ComponentRef Id='ApplicationShortcuts'/>
+            <ComponentRef Id='DesktopShortcutComponent'/>
+        </Feature>
+
+        <UIRef Id='WixUI_InstallDir'/>
+        <Property Id='WIXUI_INSTALLDIR' Value='APPLICATIONFOLDER'/>
+
+        <WixVariable Id='WixUILicenseRtf' Value='assets/license.rtf'/>
+    </Product>
+</Wix>

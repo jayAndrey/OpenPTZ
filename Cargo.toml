@@ -23,8 +23,21 @@ crossterm = "0.28"
 ratatui = "0.29"
 tiny_http = "0.12"
 anyhow = "1.0"
-libc = "0.2"
 dirs = "6.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_Media_DirectShow",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Ole",
+] }
 
 [package.metadata.deb]
 name = "openptz"
@@ -43,3 +56,9 @@ assets = [
     ["assets/openptz.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["README.md", "usr/share/doc/openptz/README.md", "644"],
 ]
+
+[package.metadata.wix]
+upgrade-guid = "1B65787F-B637-4AEB-B220-3463684B69A9"
+path-guid = "F1EB2729-5F63-4DBD-8ACD-FBFCD0F89A1D"
+license = "assets/license.rtf"
+eula = false

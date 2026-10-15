@@ -1,5 +1,6 @@
 mod api;
-mod cameras;
+pub mod camera;
+pub mod cameras;
 mod cli;
 mod presets;
 mod tui;
@@ -122,8 +123,29 @@ fn launch_gui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(200));
             let url = format!("http://localhost:{}", p);
-            // Try launching Chrome in native-like borderless app mode first
-            let chrome_res = std::process::Command::new("google-chrome")
+            open_browser(&url);
+        });
+    }
+
+    let server = api::ApiServer::new(device, port);
+    server.run()?;
+    Ok(())
+}
+
+fn open_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        // Try Microsoft Edge or Chrome in app mode first
+        let edge_res = std::process::Command::new("msedge")
+            .arg(format!("--app={}", url))
+            .arg("--use-fake-ui-for-media-stream")
+            .arg("--autoplay-policy=no-user-gesture-required")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        if edge_res.is_err() {
+            let chrome_res = std::process::Command::new("chrome")
                 .arg(format!("--app={}", url))
                 .arg("--use-fake-ui-for-media-stream")
                 .arg("--autoplay-policy=no-user-gesture-required")
@@ -132,18 +154,59 @@ fn launch_gui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
                 .spawn();
 
             if chrome_res.is_err() {
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&url)
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", "start", "", url])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn();
             }
-        });
+        }
     }
 
-    let server = api::ApiServer::new(device, port);
-    server.run()?;
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        let chrome_res = std::process::Command::new(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        )
+        .arg(format!("--app={}", url))
+        .arg("--use-fake-ui-for-media-stream")
+        .arg("--autoplay-policy=no-user-gesture-required")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+        if chrome_res.is_err() {
+            let _ = std::process::Command::new("open")
+                .arg(url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let chrome_res = std::process::Command::new("google-chrome")
+            .arg(format!("--app={}", url))
+            .arg("--use-fake-ui-for-media-stream")
+            .arg("--autoplay-policy=no-user-gesture-required")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        if chrome_res.is_err() {
+            let _ = std::process::Command::new("xdg-open")
+                .arg(url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
 }
 
 fn list_devices() {
