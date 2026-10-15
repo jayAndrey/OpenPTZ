@@ -22,7 +22,7 @@ If you have experience with Windows Media Foundation or macOS CoreMediaIO/IOKit,
 ## 🛠️ Development Setup
 
 ### 1. Prerequisites
-- [Rust toolchain](https://rustup.rs/) (1.80 or newer):
+- [Rust toolchain](https://rustup.rs/) (1.88 or newer):
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```

@@ -70,6 +70,21 @@ fn read_variant_string(prop_bag: &IPropertyBag, prop_name: &str) -> Option<Strin
     None
 }
 
+fn axis_units_per_degree(min: i32, max: i32) -> f32 {
+    if min.unsigned_abs().max(max.unsigned_abs()) > 360 {
+        UNITS_PER_DEGREE
+    } else {
+        1.0
+    }
+}
+
+fn axis_target_raw(deg: f32, min: i32, max: i32, step: i32) -> i32 {
+    let raw = (deg * axis_units_per_degree(min, max)).round() as i32;
+    let step = step.max(1);
+    let aligned = min + (((raw.clamp(min, max) - min) as f32 / step as f32).round() as i32) * step;
+    aligned.clamp(min, max)
+}
+
 impl CameraDeviceImpl {
     pub fn discover_devices() -> Vec<DeviceInfo> {
         init_com();
@@ -271,9 +286,7 @@ impl CameraDeviceImpl {
             }
 
             let profile = crate::cameras::detect_profile(&selected_name, None);
-            let has_rally_xu = xu_peripheral_node_id.is_some()
-                || profile.capabilities().vendor_name == "Logitech"
-                || selected_name.to_lowercase().contains("rally");
+            let has_rally_xu = xu_peripheral_node_id.is_some();
 
             Ok(Self {
                 filter,
@@ -329,7 +342,7 @@ impl CameraDeviceImpl {
         self.has_rally_xu
     }
 
-    pub fn xu_set_peripheral_property(&self, property_id: u32, value: u32) -> Result<()> {
+    fn xu_set_peripheral_bytes(&self, property_id: u32, value: &[u8]) -> Result<()> {
         let (ks, node_id) = match (&self.ks_control, self.xu_peripheral_node_id) {
             (Some(ks), Some(node_id)) => (ks, node_id),
             _ => bail!("Logitech XU Peripheral control is not available on this device"),
@@ -345,18 +358,38 @@ impl CameraDeviceImpl {
             KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_TOPOLOGY;
         ext_prop.NodeId = node_id;
 
-        let mut val = value;
+        let mut val = value.to_vec();
         let mut bytes_returned = 0;
         unsafe {
             ks.KsProperty(
                 &ext_prop as *const _ as *const _,
                 std::mem::size_of::<KSP_NODE>() as u32,
-                &mut val as *mut _ as *mut _,
-                std::mem::size_of::<u32>() as u32,
+                val.as_mut_ptr().cast(),
+                val.len() as u32,
                 &mut bytes_returned,
             )
             .context("Failed to send Logitech XU property")?;
         }
+        Ok(())
+    }
+
+    pub fn xu_set_peripheral_property(&self, property_id: u32, value: u32) -> Result<()> {
+        self.xu_set_peripheral_bytes(property_id, &[value as u8])
+    }
+
+    fn move_xu_axis(&self, delta_deg: f32, shift: u32) -> Result<()> {
+        if delta_deg.abs() < 0.2 {
+            return Ok(());
+        }
+        if self.xu_peripheral_node_id.is_none() {
+            bail!("Pan/tilt control is not supported by this camera");
+        }
+        let direction: i8 = if delta_deg > 0.0 { 1 } else { -1 };
+        let value = (direction as u8 as u32) << shift;
+        self.xu_set_peripheral_bytes(1, &value.to_le_bytes())?;
+        let duration = (delta_deg.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+        std::thread::sleep(std::time::Duration::from_millis(duration));
+        self.xu_set_peripheral_bytes(1, &[0, 0, 0, 0])?;
         Ok(())
     }
 
@@ -409,44 +442,49 @@ impl CameraDeviceImpl {
     // High-Level PTZ Operations (Delegated to Profile limits)
     // -------------------------------------------------------------
 
-    pub fn get_pan_deg(&self) -> Result<f32> {
-        if self.xu_peripheral_node_id.is_some() || self.is_rally() {
-            return Ok(*self.cached_pan_deg.lock().unwrap());
+    fn axis_range(&self, property: i32) -> Option<(i32, i32, i32)> {
+        let cc = self.cam_control.as_ref()?;
+        let (mut min, mut max, mut step, mut default, mut flags) = (0, 0, 0, 0, 0);
+        unsafe {
+            cc.GetRange(
+                property,
+                &mut min,
+                &mut max,
+                &mut step,
+                &mut default,
+                &mut flags,
+            )
+            .ok()?;
         }
-        if let Some(ref cc) = self.cam_control {
-            let mut min = 0;
-            let mut max = 0;
-            let mut step = 0;
-            let mut def = 0;
-            let mut flags = 0;
-            unsafe {
-                if cc
-                    .GetRange(
-                        CameraControl_Pan.0,
-                        &mut min,
-                        &mut max,
-                        &mut step,
-                        &mut def,
-                        &mut flags,
-                    )
-                    .is_ok()
-                {
-                    let mut val = 0;
-                    let mut cur_flags = 0;
-                    if cc
-                        .Get(CameraControl_Pan.0, &mut val, &mut cur_flags)
-                        .is_ok()
-                    {
-                        let deg = if max.abs() > 360 {
-                            val as f32 / UNITS_PER_DEGREE
-                        } else {
-                            val as f32
-                        };
-                        *self.cached_pan_deg.lock().unwrap() = deg;
-                        return Ok(deg);
-                    }
-                }
-            }
+        Some((min, max, step))
+    }
+
+    fn read_axis_deg(&self, property: i32) -> Result<Option<f32>> {
+        let Some((min, max, _)) = self.axis_range(property) else {
+            return Ok(None);
+        };
+        let cc = self.cam_control.as_ref().unwrap();
+        let (mut value, mut flags) = (0, 0);
+        unsafe { cc.Get(property, &mut value, &mut flags) }
+            .with_context(|| format!("Failed to read camera control {property}"))?;
+        Ok(Some(value as f32 / axis_units_per_degree(min, max)))
+    }
+
+    fn write_axis_deg(&self, property: i32, deg: f32) -> Result<bool> {
+        let Some((min, max, step)) = self.axis_range(property) else {
+            return Ok(false);
+        };
+        let raw = axis_target_raw(deg, min, max, step);
+        let cc = self.cam_control.as_ref().unwrap();
+        unsafe { cc.Set(property, raw, CameraControl_Flags_Manual.0) }
+            .with_context(|| format!("Failed to set camera control {property} to {raw}"))?;
+        Ok(true)
+    }
+
+    pub fn get_pan_deg(&self) -> Result<f32> {
+        if let Some(deg) = self.read_axis_deg(CameraControl_Pan.0)? {
+            *self.cached_pan_deg.lock().unwrap() = deg;
+            return Ok(deg);
         }
         Ok(*self.cached_pan_deg.lock().unwrap())
     }
@@ -457,11 +495,12 @@ impl CameraDeviceImpl {
         let max_deg = limits.pan_raw_to_deg(limits.pan_max);
         let clamped_deg = deg.clamp(min_deg, max_deg);
 
-        let current = *self.cached_pan_deg.lock().unwrap();
-        let delta = clamped_deg - current;
-        if delta.abs() > 0.2 {
-            self.pan_relative(delta)?;
+        if self.write_axis_deg(CameraControl_Pan.0, clamped_deg)? {
+            *self.cached_pan_deg.lock().unwrap() = clamped_deg;
+            return Ok(());
         }
+        let current = *self.cached_pan_deg.lock().unwrap();
+        self.move_xu_axis(clamped_deg - current, 8)?;
         *self.cached_pan_deg.lock().unwrap() = clamped_deg;
         Ok(())
     }
@@ -476,79 +515,16 @@ impl CameraDeviceImpl {
         let min_deg = limits.pan_raw_to_deg(limits.pan_min);
         let max_deg = limits.pan_raw_to_deg(limits.pan_max);
 
-        let current = *self.cached_pan_deg.lock().unwrap();
+        let current = self.get_pan_deg()?;
         let target = (current + delta_deg).clamp(min_deg, max_deg);
-        let actual_delta = target - current;
-
-        let dir: i8 = if actual_delta > 0.0 {
-            1
-        } else if actual_delta < 0.0 {
-            -1
-        } else {
-            0
-        };
-        if dir != 0 {
-            let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
-            if self.xu_peripheral_node_id.is_some() {
-                let dw_val = (dir as u8 as u32) << 8;
-                let _ = self.xu_set_peripheral_property(1, dw_val);
-                std::thread::sleep(std::time::Duration::from_millis(duration_ms));
-                let _ = self.xu_set_peripheral_property(1, 0);
-            } else if let Some(ref cc) = self.cam_control {
-                unsafe {
-                    let _ = cc.Set(10, dir as i32, 0);
-                    let _ = cc.Set(
-                        CameraControl_Pan.0,
-                        target as i32,
-                        CameraControl_Flags_Manual.0,
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
-                    let _ = cc.Set(10, 0, 0);
-                }
-            }
-        }
-        *self.cached_pan_deg.lock().unwrap() = target;
-        Ok(target)
+        self.set_pan_deg(target)?;
+        self.get_pan_deg()
     }
 
     pub fn get_tilt_deg(&self) -> Result<f32> {
-        if self.xu_peripheral_node_id.is_some() || self.is_rally() {
-            return Ok(*self.cached_tilt_deg.lock().unwrap());
-        }
-        if let Some(ref cc) = self.cam_control {
-            let mut min = 0;
-            let mut max = 0;
-            let mut step = 0;
-            let mut def = 0;
-            let mut flags = 0;
-            unsafe {
-                if cc
-                    .GetRange(
-                        CameraControl_Tilt.0,
-                        &mut min,
-                        &mut max,
-                        &mut step,
-                        &mut def,
-                        &mut flags,
-                    )
-                    .is_ok()
-                {
-                    let mut val = 0;
-                    let mut cur_flags = 0;
-                    if cc
-                        .Get(CameraControl_Tilt.0, &mut val, &mut cur_flags)
-                        .is_ok()
-                    {
-                        let deg = if max.abs() > 360 {
-                            val as f32 / UNITS_PER_DEGREE
-                        } else {
-                            val as f32
-                        };
-                        *self.cached_tilt_deg.lock().unwrap() = deg;
-                        return Ok(deg);
-                    }
-                }
-            }
+        if let Some(deg) = self.read_axis_deg(CameraControl_Tilt.0)? {
+            *self.cached_tilt_deg.lock().unwrap() = deg;
+            return Ok(deg);
         }
         Ok(*self.cached_tilt_deg.lock().unwrap())
     }
@@ -559,11 +535,12 @@ impl CameraDeviceImpl {
         let max_deg = limits.tilt_raw_to_deg(limits.tilt_max);
         let clamped_deg = deg.clamp(min_deg, max_deg);
 
-        let current = *self.cached_tilt_deg.lock().unwrap();
-        let delta = clamped_deg - current;
-        if delta.abs() > 0.2 {
-            self.tilt_relative(delta)?;
+        if self.write_axis_deg(CameraControl_Tilt.0, clamped_deg)? {
+            *self.cached_tilt_deg.lock().unwrap() = clamped_deg;
+            return Ok(());
         }
+        let current = *self.cached_tilt_deg.lock().unwrap();
+        self.move_xu_axis(current - clamped_deg, 24)?;
         *self.cached_tilt_deg.lock().unwrap() = clamped_deg;
         Ok(())
     }
@@ -578,39 +555,10 @@ impl CameraDeviceImpl {
         let min_deg = limits.tilt_raw_to_deg(limits.tilt_min);
         let max_deg = limits.tilt_raw_to_deg(limits.tilt_max);
 
-        let current = *self.cached_tilt_deg.lock().unwrap();
+        let current = self.get_tilt_deg()?;
         let target = (current + delta_deg).clamp(min_deg, max_deg);
-        let actual_delta = target - current;
-
-        let dir: i8 = if actual_delta > 0.0 {
-            -1
-        } else if actual_delta < 0.0 {
-            1
-        } else {
-            0
-        };
-        if dir != 0 {
-            let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
-            if self.xu_peripheral_node_id.is_some() {
-                let dw_val = (dir as u8 as u32) << 24;
-                let _ = self.xu_set_peripheral_property(1, dw_val);
-                std::thread::sleep(std::time::Duration::from_millis(duration_ms));
-                let _ = self.xu_set_peripheral_property(1, 0);
-            } else if let Some(ref cc) = self.cam_control {
-                unsafe {
-                    let _ = cc.Set(11, dir as i32, 0);
-                    let _ = cc.Set(
-                        CameraControl_Tilt.0,
-                        target as i32,
-                        CameraControl_Flags_Manual.0,
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
-                    let _ = cc.Set(11, 0, 0);
-                }
-            }
-        }
-        *self.cached_tilt_deg.lock().unwrap() = target;
-        Ok(target)
+        self.set_tilt_deg(target)?;
+        self.get_tilt_deg()
     }
 
     pub fn move_pan_tilt(&self, pan_deg: f32, tilt_deg: f32) -> Result<()> {
@@ -620,9 +568,6 @@ impl CameraDeviceImpl {
     }
 
     pub fn get_zoom_x(&self) -> Result<f32> {
-        if self.xu_peripheral_node_id.is_some() || self.is_rally() {
-            return Ok(*self.cached_zoom_x.lock().unwrap());
-        }
         if let Some(ref cc) = self.cam_control {
             let mut min = 0;
             let mut max = 0;
@@ -668,7 +613,6 @@ impl CameraDeviceImpl {
         let min_x = limits.zoom_raw_to_x(limits.zoom_min);
         let max_x = limits.zoom_raw_to_x(limits.zoom_max);
         let clamped_x = x.clamp(min_x, max_x);
-        *self.cached_zoom_x.lock().unwrap() = clamped_x;
 
         if let Some(ref cc) = self.cam_control {
             let mut min = 0;
@@ -694,11 +638,14 @@ impl CameraDeviceImpl {
                         min + ((clamped_x - 1.0) / 14.0 * (max - min) as f32).round() as i32
                     }
                     .clamp(min, max);
-                    let _ = cc.Set(CameraControl_Zoom.0, raw, CameraControl_Flags_Manual.0);
+                    cc.Set(CameraControl_Zoom.0, raw, CameraControl_Flags_Manual.0)
+                        .context("Failed to set camera zoom")?;
+                    *self.cached_zoom_x.lock().unwrap() = clamped_x;
+                    return Ok(());
                 }
             }
         }
-        Ok(())
+        bail!("Zoom control is not supported by this camera")
     }
 
     #[inline]
@@ -727,12 +674,11 @@ impl CameraDeviceImpl {
 
     pub fn home(&self) -> Result<()> {
         if self.xu_peripheral_node_id.is_some() {
-            let _ = self.xu_set_peripheral_property(2, 3);
+            self.xu_set_peripheral_property(2, 3)?;
             std::thread::sleep(std::time::Duration::from_millis(1500));
-        } else {
-            self.set_pan_deg(0.0)?;
-            self.set_tilt_deg(0.0)?;
         }
+        self.set_pan_deg(0.0)?;
+        self.set_tilt_deg(0.0)?;
         *self.cached_pan_deg.lock().unwrap() = 0.0;
         *self.cached_tilt_deg.lock().unwrap() = 0.0;
         self.set_zoom_x(1.0)?;
@@ -746,7 +692,7 @@ impl CameraDeviceImpl {
 
     pub fn recall_hardware_preset(&self, preset_num: u8) -> Result<()> {
         if (1..=8).contains(&preset_num) && self.xu_peripheral_node_id.is_some() {
-            self.xu_set_peripheral_property(2, (preset_num as u32 - 1) + 12)?;
+            self.xu_set_peripheral_bytes(3, &[1, preset_num])?;
             return Ok(());
         }
         anyhow::bail!("Hardware EEPROM presets are not directly accessible on this camera")
@@ -754,7 +700,7 @@ impl CameraDeviceImpl {
 
     pub fn save_hardware_preset(&self, preset_num: u8) -> Result<()> {
         if (1..=8).contains(&preset_num) && self.xu_peripheral_node_id.is_some() {
-            self.xu_set_peripheral_property(2, (preset_num as u32 - 1) + 4)?;
+            self.xu_set_peripheral_bytes(3, &[2, preset_num])?;
             return Ok(());
         }
         anyhow::bail!("Hardware EEPROM presets are not directly accessible on this camera")
@@ -1043,5 +989,23 @@ impl CameraDeviceImpl {
             white_balance_temp: None,
             auto_white_balance: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::axis_target_raw;
+
+    #[test]
+    fn rally_axis_uses_arcseconds_and_clamps() {
+        assert_eq!(axis_target_raw(5.0, -324000, 324000, 3600), 18000);
+        assert_eq!(axis_target_raw(-100.0, -324000, 324000, 3600), -324000);
+        assert_eq!(axis_target_raw(100.0, -324000, 180000, 3600), 180000);
+    }
+
+    #[test]
+    fn degree_based_axis_uses_reported_steps() {
+        assert_eq!(axis_target_raw(5.7, -90, 90, 2), 6);
+        assert_eq!(axis_target_raw(-5.7, -90, 90, 2), -6);
     }
 }

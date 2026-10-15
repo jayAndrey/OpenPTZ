@@ -27,7 +27,10 @@ jobs:
       - name: Install build tools and cargo-deb
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 file wget
+          sudo apt-get install -y libfuse2 file wget pkg-config libclang-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev
           cargo install cargo-deb --locked
 
       - name: Build release binary
@@ -73,7 +76,7 @@ jobs:
           HERE=${SELF%/*}
           export PATH="${HERE}/usr/bin:${PATH}"
           if [ $# -eq 0 ]; then
-              exec "${HERE}/usr/bin/openptz" ui
+              exec "${HERE}/usr/bin/openptz" gui
           else
               exec "${HERE}/usr/bin/openptz" "$@"
           fi
@@ -127,7 +130,7 @@ jobs:
       - name: Build Windows MSI Installer
         shell: pwsh
         run: |
-          $ver = if ("${{ github.ref_name }}" -match '^v?([0-9]+\.[0-9]+\.[0-9]+)') { $matches[1] } else { "0.1.0" }
+          $ver = if ("${{ github.ref_name }}" -match '^v?([0-9]+\.[0-9]+\.[0-9]+)') { $matches[1] } else { "0.2.0" }
           $wixBin = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
           if (Test-Path "$wixBin\candle.exe") {
             $env:PATH = "$wixBin;$env:PATH"
@@ -196,7 +199,40 @@ jobs:
           lipo -create -output dmg-staging/OpenPTZ.app/Contents/MacOS/openptz \
             target/x86_64-apple-darwin/release/openptz \
             target/aarch64-apple-darwin/release/openptz
+          mv dmg-staging/OpenPTZ.app/Contents/MacOS/openptz \
+            dmg-staging/OpenPTZ.app/Contents/MacOS/openptz-bin
+          cat << 'EOF' > dmg-staging/OpenPTZ.app/Contents/MacOS/openptz
+          #!/bin/sh
+          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          exec "${HERE}/openptz-bin" gui "$@"
+          EOF
           chmod +x dmg-staging/OpenPTZ.app/Contents/MacOS/openptz
+          APP_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "${APP_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            APP_VERSION="0.2.0"
+          fi
+          cat << EOF > dmg-staging/OpenPTZ.app/Contents/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>openptz</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.openptz.app</string>
+            <key>CFBundleName</key>
+            <string>OpenPTZ</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${APP_VERSION}</string>
+            <key>CFBundleVersion</key>
+            <string>${APP_VERSION}</string>
+            <key>NSCameraUsageDescription</key>
+            <string>OpenPTZ uses the camera to display a live video preview.</string>
+          </dict>
+          </plist>
+          EOF
           cp assets/openptz.svg dmg-staging/OpenPTZ.app/Contents/Resources/
           cp README.md LICENSE-MIT LICENSE-APACHE dmg-staging/
           ln -s /Applications dmg-staging/Applications

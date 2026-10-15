@@ -15,7 +15,8 @@ flowchart TD
     subgraph PresentationTier ["1. Presentation & Interface Tier"]
         CLI["CLI Interface"]
         TUI["Terminal UI (TUI)"]
-        WEB["Web GUI (HTML5)"]
+        DESKTOP["Native GUI"]
+        WEB["Network UI (HTML5)"]
         API["REST API (HTTP/JSON)"]
     end
 
@@ -54,6 +55,8 @@ flowchart TD
     CLI --> PRESET
     TUI --> DEV
     TUI --> PRESET
+    DESKTOP --> DEV
+    DESKTOP --> PRESET
     WEB --> API
     API --> DEV
     API --> PRESET
@@ -66,18 +69,23 @@ flowchart TD
     V4L2_DEV --> UVC_STD
     V4L2_DEV --> UVC_XU
     V4L2_DEV -.-> STREAM
-    STREAM -.-> WEB
+    STREAM --> CAPTURE["Native video capture"]
+    CAPTURE --> DESKTOP
+    CAPTURE --> API
+    API --> WEB
 ```
 
 ---
 
 ## 2. Subsystem Boundaries & Responsibilities
 
-### 2.1 Interface Layer (`src/api`, `src/tui`, `src/cli.rs`)
+### 2.1 Interface Layer (`src/desktop`, `src/api`, `src/tui`, `src/cli.rs`)
 - **Command Line Interface (CLI)**: Non-interactive interface for scripting, system automation, and external tool integration. Provides direct single-shot commands (pan, tilt, zoom, presets, device listing).
 - **Terminal User Interface (TUI)**: Interactive full-terminal console with real-time Pan/Tilt coordinate reticle, status gauges, anti-flicker controls, and keyboard navigation.
 - **REST API Server**: Embedded HTTP/JSON server exposing endpoints for camera motion, coordinate queries, and hardware presets. Serves external automation engines (such as Elgato Stream Deck and Bitfocus Companion).
-- **Web User Interface (Web GUI)**: Single-page browser interface providing a live HTML5 camera preview, Click-to-Aim interactive controls, and visual preset slots.
+- **Native GUI**: Local application window with direct PTZ control and native camera preview. It does not start an HTTP listener.
+- **Network UI**: Browser interface with camera frames streamed from the OpenPTZ host, Click-to-Aim controls, and preset slots. It is accessible from localhost and other network devices.
+- **Video Capture**: A separate platform-backed capture path supplies frames to the native GUI or to the network stream. The selected preview source must correspond to the PTZ device. After a camera disconnect, capture retries with a capped backoff (1 s, 2 s, 4 s, then 5 s) and resumes when the device returns. The platform capability matrix is in `README.md`.
 
 ### 2.2 State & Presets (`src/presets.rs`)
 - **Preset Persistence**: Manages named software presets serialized to `~/.config/openptz/presets.json`.

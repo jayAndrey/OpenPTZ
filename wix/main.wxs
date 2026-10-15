@@ -89,8 +89,16 @@
                     <Component Id='ApplicationShortcuts' Guid='74E37A8B-22DF-4399-A6BE-C6CE36B04423' Win64='yes'>
                         <Shortcut
                             Id='WebGuiShortcut'
-                            Name='OpenPTZ Web GUI'
-                            Description='Launch OpenPTZ Web Interface and Video Stream'
+                            Name='OpenPTZ Native GUI'
+                            Description='Launch OpenPTZ Native Camera Controller'
+                            Target='[APPLICATIONFOLDER]openptz.exe'
+                            Arguments='gui'
+                            WorkingDirectory='APPLICATIONFOLDER'
+                            Icon='ProductICO'/>
+                        <Shortcut
+                            Id='NetworkUiShortcut'
+                            Name='OpenPTZ Network UI'
+                            Description='Launch OpenPTZ Network Interface'
                             Target='[APPLICATIONFOLDER]openptz.exe'
                             Arguments='ui'
                             WorkingDirectory='APPLICATIONFOLDER'
@@ -126,10 +134,10 @@
                 <Component Id='DesktopShortcutComponent' Guid='36BCFA3D-7B5A-4B7E-AE50-6126E50A0B1A' Win64='yes'>
                     <Shortcut
                         Id='DesktopWebGuiShortcut'
-                        Name='OpenPTZ Web GUI'
-                        Description='Launch OpenPTZ Web Interface and Video Stream'
+                        Name='OpenPTZ'
+                        Description='Launch OpenPTZ Native Camera Controller'
                         Target='[APPLICATIONFOLDER]openptz.exe'
-                        Arguments='ui'
+                        Arguments='gui'
                         WorkingDirectory='APPLICATIONFOLDER'
                         Icon='ProductICO'/>
                     <RegistryValue

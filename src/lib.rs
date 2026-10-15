@@ -5,3 +5,4 @@ pub mod cli;
 pub mod presets;
 pub mod tui;
 pub mod v4l2;
+pub mod video;

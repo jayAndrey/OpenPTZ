@@ -2,7 +2,7 @@
 # Builds both MSI (via WiX) and EXE Setup (via Inno Setup) if available.
 
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "0.2.0",
     [switch]$SkipBuild = $false
 )
 

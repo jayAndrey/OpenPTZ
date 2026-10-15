@@ -2,9 +2,11 @@ mod api;
 pub mod camera;
 pub mod cameras;
 mod cli;
+mod desktop;
 mod presets;
 mod tui;
 mod v4l2;
+mod video;
 
 use anyhow::Result;
 use clap::Parser;
@@ -36,8 +38,12 @@ fn main() -> Result<()> {
 
     // 4. Dispatch standard commands
     match args.command {
-        Some(Commands::Ui { port, no_browser }) | Some(Commands::Gui { port, no_browser }) => {
-            launch_gui(device, port, no_browser)?;
+        Some(Commands::Ui { port, no_browser }) => {
+            launch_web_ui(device, port, no_browser)?;
+        }
+
+        Some(Commands::Gui) => {
+            desktop::run(device)?;
         }
 
         None | Some(Commands::Tui) => {
@@ -213,7 +219,7 @@ fn run_motion_diagnostics(device: &CameraDevice) -> Result<()> {
     Ok(())
 }
 
-fn launch_gui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
+fn launch_web_ui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
     // Automatically wake up camera from privacy park mode (-90°)
     if let Ok(tilt) = device.get_tilt_deg() {
         if tilt <= -80.0 {
@@ -242,7 +248,6 @@ fn open_browser(url: &str) {
         // Try Microsoft Edge or Chrome in app mode first
         let edge_res = std::process::Command::new("msedge")
             .arg(format!("--app={}", url))
-            .arg("--use-fake-ui-for-media-stream")
             .arg("--autoplay-policy=no-user-gesture-required")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -251,7 +256,6 @@ fn open_browser(url: &str) {
         if edge_res.is_err() {
             let chrome_res = std::process::Command::new("chrome")
                 .arg(format!("--app={}", url))
-                .arg("--use-fake-ui-for-media-stream")
                 .arg("--autoplay-policy=no-user-gesture-required")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -273,7 +277,6 @@ fn open_browser(url: &str) {
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         )
         .arg(format!("--app={}", url))
-        .arg("--use-fake-ui-for-media-stream")
         .arg("--autoplay-policy=no-user-gesture-required")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -292,7 +295,6 @@ fn open_browser(url: &str) {
     {
         let chrome_res = std::process::Command::new("google-chrome")
             .arg(format!("--app={}", url))
-            .arg("--use-fake-ui-for-media-stream")
             .arg("--autoplay-policy=no-user-gesture-required")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

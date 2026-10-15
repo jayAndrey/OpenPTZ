@@ -1,7 +1,8 @@
 [package]
 name = "openptz"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.88"
 authors = ["andryjay"]
 description = "Modern, cross-platform PTZ camera controller for Linux, Windows & macOS with live video preview, Web GUI, TUI, and REST API."
 license = "MIT OR Apache-2.0"
@@ -28,6 +29,9 @@ ratatui = "0.29"
 tiny_http = "0.12"
 anyhow = "1.0"
 dirs = "6.0"
+eframe = { version = "=0.30.0", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+image = { version = "=0.25.2", default-features = false, features = ["jpeg"] }
+nokhwa = { version = "=0.10.11", features = ["input-native"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
