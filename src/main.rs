@@ -90,7 +90,10 @@ fn main() -> Result<()> {
 
             let cur_pan = device.get_pan_deg()?;
             let cur_tilt = device.get_tilt_deg()?;
-            println!("Current Position: Pan={:+.1}°, Tilt={:+.1}°", cur_pan, cur_tilt);
+            println!(
+                "Current Position: Pan={:+.1}°, Tilt={:+.1}°",
+                cur_pan, cur_tilt
+            );
         }
 
         Some(Commands::Preset(preset_args)) => {
@@ -146,7 +149,10 @@ fn list_devices() {
     let devices = CameraDevice::discover_devices();
     println!("Found {} video capture device(s):", devices.len());
     println!("{:-<75}", "");
-    println!("{:<14} {:<30} {:<12} {:<10}", "Device", "Name", "PTZ", "Rally XU");
+    println!(
+        "{:<14} {:<30} {:<12} {:<10}",
+        "Device", "Name", "PTZ", "Rally XU"
+    );
     println!("{:-<75}", "");
 
     for d in devices {
@@ -166,11 +172,27 @@ fn list_devices() {
 fn print_status_table(status: &v4l2::CameraStatus, has_xu: bool) {
     println!("\n🎥 Camera Status: {}", status.card_name);
     println!("   Device Path:   {}", status.device_path);
-    println!("   Logitech XU:   {}", if has_xu { "Active (HW Presets 1-8 supported)" } else { "Standard V4L2" });
+    println!(
+        "   Logitech XU:   {}",
+        if has_xu {
+            "Active (HW Presets 1-8 supported)"
+        } else {
+            "Standard V4L2"
+        }
+    );
     println!("{:-<50}", "");
-    println!("   Pan:           {:+.1}°  (raw: {})", status.pan_deg, status.pan_raw);
-    println!("   Tilt:          {:+.1}°  (raw: {})", status.tilt_deg, status.tilt_raw);
-    println!("   Zoom:          {:.1}x    (raw: {})", status.zoom_x, status.zoom_raw);
+    println!(
+        "   Pan:           {:+.1}°  (raw: {})",
+        status.pan_deg, status.pan_raw
+    );
+    println!(
+        "   Tilt:          {:+.1}°  (raw: {})",
+        status.tilt_deg, status.tilt_raw
+    );
+    println!(
+        "   Zoom:          {:.1}x    (raw: {})",
+        status.zoom_x, status.zoom_raw
+    );
     println!("{:-<50}", "");
     if let Some(f) = status.power_line_frequency {
         let text = match f {
@@ -190,14 +212,21 @@ fn print_status_table(status: &v4l2::CameraStatus, has_xu: bool) {
         println!("   Saturation:    {}", s);
     }
     if let Some(exp) = status.auto_exposure {
-        let text = if exp == 3 { "Auto (Aperture Priority)" } else { "Manual" };
+        let text = if exp == 3 {
+            "Auto (Aperture Priority)"
+        } else {
+            "Manual"
+        };
         println!("   Exposure Mode: {}", text);
     }
     if let Some(exp_time) = status.exposure_time {
         println!("   Exposure Time: {}", exp_time);
     }
     if let Some(af) = status.auto_focus {
-        println!("   Auto Focus:    {}", if af { "Enabled" } else { "Disabled" });
+        println!(
+            "   Auto Focus:    {}",
+            if af { "Enabled" } else { "Disabled" }
+        );
     }
     println!("{:-<50}\n", "");
 }

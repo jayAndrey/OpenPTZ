@@ -36,7 +36,7 @@ pub const UVC_GET_INFO: u8 = 0x86;
 pub const UVC_GET_DEF: u8 = 0x87;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct V4l2Capability {
     pub driver: [u8; 16],
     pub card: [u8; 32],
@@ -47,20 +47,6 @@ pub struct V4l2Capability {
     pub reserved: [u32; 3],
 }
 
-impl Default for V4l2Capability {
-    fn default() -> Self {
-        Self {
-            driver: [0; 16],
-            card: [0; 32],
-            bus_info: [0; 32],
-            version: 0,
-            capabilities: 0,
-            device_caps: 0,
-            reserved: [0; 3],
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct V4l2Control {
@@ -69,7 +55,7 @@ pub struct V4l2Control {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct V4l2QueryCtrl {
     pub id: u32,
     pub ctrl_type: u32,
@@ -80,22 +66,6 @@ pub struct V4l2QueryCtrl {
     pub default_value: i32,
     pub flags: u32,
     pub reserved: [u32; 2],
-}
-
-impl Default for V4l2QueryCtrl {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            ctrl_type: 0,
-            name: [0; 32],
-            minimum: 0,
-            maximum: 0,
-            step: 0,
-            default_value: 0,
-            flags: 0,
-            reserved: [0; 2],
-        }
-    }
 }
 
 #[repr(C)]

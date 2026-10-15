@@ -70,10 +70,7 @@ impl CameraDevice {
         // Check /sys/class/video4linux
         let sys_path = Path::new("/sys/class/video4linux");
         if let Ok(entries) = fs::read_dir(sys_path) {
-            let mut paths: Vec<_> = entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .collect();
+            let mut paths: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
             paths.sort();
 
             for p in paths {
@@ -245,8 +242,10 @@ impl CameraDevice {
 
     /// Query details of a V4L2 control
     pub fn query_ctrl(&self, cid: u32) -> Result<ControlInfo> {
-        let mut q = V4l2QueryCtrl::default();
-        q.id = cid;
+        let mut q = V4l2QueryCtrl {
+            id: cid,
+            ..Default::default()
+        };
         unsafe {
             ioctl_call(self.raw_fd(), VIDIOC_QUERYCTRL, &mut q)
                 .with_context(|| format!("Failed to query control 0x{:08x}", cid))?;
@@ -276,8 +275,10 @@ impl CameraDevice {
         let mut cid = V4L2_CTRL_FLAG_NEXT_CTRL;
 
         loop {
-            let mut q = V4l2QueryCtrl::default();
-            q.id = cid;
+            let mut q = V4l2QueryCtrl {
+                id: cid,
+                ..Default::default()
+            };
             let res = unsafe { ioctl_call(self.raw_fd(), VIDIOC_QUERYCTRL, &mut q) };
             if res.is_err() {
                 break;

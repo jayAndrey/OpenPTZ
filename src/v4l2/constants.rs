@@ -61,16 +61,16 @@ pub const FLICKER_AUTO: i32 = 3;
 pub const UNITS_PER_DEGREE: f32 = 3600.0;
 
 // Logi Rally Limits (confirmed on hardware)
-pub const RALLY_PAN_MIN: i32 = -324000;  // -90.0°
-pub const RALLY_PAN_MAX: i32 = 324000;   // +90.0°
-pub const RALLY_PAN_STEP: i32 = 3600;    // 1.0°
+pub const RALLY_PAN_MIN: i32 = -324000; // -90.0°
+pub const RALLY_PAN_MAX: i32 = 324000; // +90.0°
+pub const RALLY_PAN_STEP: i32 = 3600; // 1.0°
 
 pub const RALLY_TILT_MIN: i32 = -324000; // -90.0°
-pub const RALLY_TILT_MAX: i32 = 180000;  // +50.0°
-pub const RALLY_TILT_STEP: i32 = 3600;   // 1.0°
+pub const RALLY_TILT_MAX: i32 = 180000; // +50.0°
+pub const RALLY_TILT_STEP: i32 = 3600; // 1.0°
 
-pub const RALLY_ZOOM_MIN: i32 = 100;     // 1.0x
-pub const RALLY_ZOOM_MAX: i32 = 1500;    // 15.0x
+pub const RALLY_ZOOM_MIN: i32 = 100; // 1.0x
+pub const RALLY_ZOOM_MAX: i32 = 1500; // 15.0x
 pub const RALLY_ZOOM_STEP: i32 = 1;
 
 #[inline]

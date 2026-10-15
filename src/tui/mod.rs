@@ -12,9 +12,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        canvas::Canvas, Block, BorderType, Borders, Gauge, Paragraph, Wrap,
-    },
+    widgets::{canvas::Canvas, Block, BorderType, Borders, Gauge, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -38,7 +36,8 @@ impl TuiApp {
             preset_mgr: PresetManager::load(),
             step_deg: 5.0,
             zoom_step: 0.5,
-            status_message: "Ready. Use Arrow keys to Pan/Tilt, +/- to Zoom, 1-8 for Presets.".to_string(),
+            status_message: "Ready. Use Arrow keys to Pan/Tilt, +/- to Zoom, 1-8 for Presets."
+                .to_string(),
             status_time: Instant::now(),
             should_quit: false,
         }
@@ -128,26 +127,35 @@ impl TuiApp {
             }
 
             // Home Position
-            (KeyCode::Home, _) | (KeyCode::Char('h'), KeyModifiers::NONE) | (KeyCode::Char('0'), _) => {
-                match self.device.goto_home() {
-                    Ok(()) => self.set_status("Camera returned to Home position."),
-                    Err(e) => self.set_status(format!("Home failed: {}", e)),
-                }
-            }
+            (KeyCode::Home, _)
+            | (KeyCode::Char('h'), KeyModifiers::NONE)
+            | (KeyCode::Char('0'), _) => match self.device.goto_home() {
+                Ok(()) => self.set_status("Camera returned to Home position."),
+                Err(e) => self.set_status(format!("Home failed: {}", e)),
+            },
 
             // Presets 1-8: Shift = Save, Normal = Recall
             (KeyCode::Char(c @ '1'..='8'), KeyModifiers::SHIFT) => {
                 let num = c.to_digit(10).unwrap() as u8;
                 match self.preset_mgr.save_slot(num, &self.device) {
-                    Ok(p) => self.set_status(format!("Preset {} saved! (Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x)", num, p.pan_deg, p.tilt_deg, p.zoom_x)),
+                    Ok(p) => self.set_status(format!(
+                        "Preset {} saved! (Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x)",
+                        num, p.pan_deg, p.tilt_deg, p.zoom_x
+                    )),
                     Err(e) => self.set_status(format!("Save Preset {} failed: {}", num, e)),
                 }
             }
             (KeyCode::Char(c @ '1'..='8'), _) => {
                 let num = c.to_digit(10).unwrap() as u8;
                 match self.preset_mgr.recall_slot(num, &self.device) {
-                    Ok(p) => self.set_status(format!("Moved to Preset {}: Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x", num, p.pan_deg, p.tilt_deg, p.zoom_x)),
-                    Err(_) => self.set_status(format!("Preset {} is empty! Press Shift+{} to save current position.", num, num)),
+                    Ok(p) => self.set_status(format!(
+                        "Moved to Preset {}: Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
+                        num, p.pan_deg, p.tilt_deg, p.zoom_x
+                    )),
+                    Err(_) => self.set_status(format!(
+                        "Preset {} is empty! Press Shift+{} to save current position.",
+                        num, num
+                    )),
                 }
             }
 
@@ -222,10 +230,10 @@ impl TuiApp {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Min(12),    // Body
-                Constraint::Length(3),  // Status Bar
-                Constraint::Length(2),  // Keybindings
+                Constraint::Length(3), // Header
+                Constraint::Min(12),   // Body
+                Constraint::Length(3), // Status Bar
+                Constraint::Length(2), // Keybindings
             ])
             .split(size);
 
@@ -239,13 +247,27 @@ impl TuiApp {
         let card = self.device.card_name();
         let path = self.device.path().to_string_lossy();
         let xu_badge = if self.device.has_rally_xu() {
-            Span::styled(" [Logi XU: ACTIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+            Span::styled(
+                " [Logi XU: ACTIVE] ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            Span::styled(" [Logi XU: Standard V4L2] ", Style::default().fg(Color::Yellow))
+            Span::styled(
+                " [Logi XU: Standard V4L2] ",
+                Style::default().fg(Color::Yellow),
+            )
         };
 
         let title = Line::from(vec![
-            Span::styled("🎥 PTZ Control - Logitech Rally Camera ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "🎥 PTZ Control - Logitech Rally Camera ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             xu_badge,
             Span::raw(format!("  Device: {} ({})", card, path)),
         ]);
@@ -255,7 +277,9 @@ impl TuiApp {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Cyan));
 
-        let paragraph = Paragraph::new(title).block(block).alignment(Alignment::Left);
+        let paragraph = Paragraph::new(title)
+            .block(block)
+            .alignment(Alignment::Left);
         f.render_widget(paragraph, area);
     }
 
@@ -277,10 +301,10 @@ impl TuiApp {
         let ptz_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(8),     // 2D Canvas Target
-                Constraint::Length(2),  // Pan Gauge
-                Constraint::Length(2),  // Tilt Gauge
-                Constraint::Length(2),  // Zoom Gauge
+                Constraint::Min(8),    // 2D Canvas Target
+                Constraint::Length(2), // Pan Gauge
+                Constraint::Length(2), // Tilt Gauge
+                Constraint::Length(2), // Zoom Gauge
             ])
             .split(area);
 
@@ -313,7 +337,11 @@ impl TuiApp {
                 });
 
                 // Draw home marker at (0, 0)
-                ctx.print(0.0, 0.0, Span::styled("⌂", Style::default().fg(Color::Yellow)));
+                ctx.print(
+                    0.0,
+                    0.0,
+                    Span::styled("⌂", Style::default().fg(Color::Yellow)),
+                );
 
                 // Draw current camera target crosshair
                 ctx.draw(&ratatui::widgets::canvas::Line {
@@ -330,7 +358,11 @@ impl TuiApp {
                     y2: (tilt_deg + 6.0) as f64,
                     color: Color::Green,
                 });
-                ctx.print(pan_deg as f64, tilt_deg as f64, Span::styled("◉", Style::default().fg(Color::Red)));
+                ctx.print(
+                    pan_deg as f64,
+                    tilt_deg as f64,
+                    Span::styled("◉", Style::default().fg(Color::Red)),
+                );
             });
 
         f.render_widget(canvas, ptz_chunks[0]);
@@ -340,7 +372,10 @@ impl TuiApp {
         let pan_gauge = Gauge::default()
             .gauge_style(Style::default().fg(Color::Yellow).bg(Color::DarkGray))
             .percent(pan_pct)
-            .label(format!("Pan: {:+.1}° (Step: {:.0}°)", pan_deg, self.step_deg));
+            .label(format!(
+                "Pan: {:+.1}° (Step: {:.0}°)",
+                pan_deg, self.step_deg
+            ));
         f.render_widget(pan_gauge, ptz_chunks[1]);
 
         // Tilt Gauge (-90 to +50) -> (0% to 100%)
@@ -348,7 +383,10 @@ impl TuiApp {
         let tilt_gauge = Gauge::default()
             .gauge_style(Style::default().fg(Color::Magenta).bg(Color::DarkGray))
             .percent(tilt_pct)
-            .label(format!("Tilt: {:+.1}° (Step: {:.0}°)", tilt_deg, self.step_deg));
+            .label(format!(
+                "Tilt: {:+.1}° (Step: {:.0}°)",
+                tilt_deg, self.step_deg
+            ));
         f.render_widget(tilt_gauge, ptz_chunks[2]);
 
         // Zoom Gauge (1.0x to 15.0x)
@@ -377,13 +415,25 @@ impl TuiApp {
         let brightness = self.device.get_brightness().unwrap_or(128);
         let contrast = self.device.get_contrast().unwrap_or(128);
         let auto_exp = self.device.get_auto_exposure().unwrap_or(3);
-        let exp_str = if auto_exp == 3 { "Auto (Aperture)" } else { "Manual" };
+        let exp_str = if auto_exp == 3 {
+            "Auto (Aperture)"
+        } else {
+            "Manual"
+        };
         let auto_focus = self.device.get_auto_focus().unwrap_or(true);
 
         let lines = vec![
             Line::from(vec![
-                Span::styled("Anti-Flicker:   ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{:<20}", flicker_str), Style::default().fg(Color::White)),
+                Span::styled(
+                    "Anti-Flicker:   ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:<20}", flicker_str),
+                    Style::default().fg(Color::White),
+                ),
                 Span::styled(" [F to cycle]", Style::default().fg(Color::DarkGray)),
             ]),
             Line::from(vec![
@@ -407,7 +457,10 @@ impl TuiApp {
             Line::from(vec![
                 Span::styled("Move Step Size: ", Style::default().fg(Color::Yellow)),
                 Span::raw(format!("{:.0}°", self.step_deg)),
-                Span::styled("             [ [ / ] ]", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "             [ [ / ] ]",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]),
         ];
 
@@ -417,14 +470,19 @@ impl TuiApp {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Yellow));
 
-        let p = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+        let p = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
         f.render_widget(p, chunks[0]);
 
         // Bottom: Hardware Presets 1-8
         let preset_lines = vec![
-            Line::from(vec![
-                Span::styled("Hardware Presets (Logitech EEPROM):", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "Hardware Presets (Logitech EEPROM):",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(""),
             Line::from(vec![
                 Span::styled("  [1] Preset 1    ", Style::default().fg(Color::Cyan)),
@@ -442,9 +500,19 @@ impl TuiApp {
             Line::from(vec![
                 Span::styled("Tip: ", Style::default().fg(Color::Yellow)),
                 Span::raw("Press "),
-                Span::styled("1-8", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "1-8",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" to Recall, "),
-                Span::styled("Shift+1..8", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Shift+1..8",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" to Save."),
             ]),
         ];
@@ -461,43 +529,85 @@ impl TuiApp {
 
     fn render_status(&self, f: &mut Frame, area: Rect) {
         let elapsed = self.status_time.elapsed().as_secs();
-        let color = if self.status_message.starts_with("Error") || self.status_message.contains("failed") {
-            Color::Red
-        } else if elapsed < 3 {
-            Color::LightGreen
-        } else {
-            Color::White
-        };
+        let color =
+            if self.status_message.starts_with("Error") || self.status_message.contains("failed") {
+                Color::Red
+            } else if elapsed < 3 {
+                Color::LightGreen
+            } else {
+                Color::White
+            };
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(color));
 
-        let p = Paragraph::new(Span::styled(&self.status_message, Style::default().fg(color)))
-            .block(block)
-            .alignment(Alignment::Left);
+        let p = Paragraph::new(Span::styled(
+            &self.status_message,
+            Style::default().fg(color),
+        ))
+        .block(block)
+        .alignment(Alignment::Left);
 
         f.render_widget(p, area);
     }
 
     fn render_keybindings(&self, f: &mut Frame, area: Rect) {
         let keys = Line::from(vec![
-            Span::styled("Arrows", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Arrows",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Pan/Tilt | "),
-            Span::styled("+/-", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "+/-",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Zoom | "),
-            Span::styled("Home/h", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Home/h",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Home | "),
-            Span::styled("1-8", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "1-8",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Recall | "),
-            Span::styled("Shift+1-8", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Shift+1-8",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Save | "),
-            Span::styled("F", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "F",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Flicker | "),
-            Span::styled("[ / ]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[ / ]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Step | "),
-            Span::styled("Q/Esc", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Q/Esc",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Quit"),
         ]);
 

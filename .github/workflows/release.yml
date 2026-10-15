@@ -53,7 +53,7 @@ jobs:
       - name: Build AppImage
         run: |
           # Download appimagetool
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage -O appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
           chmod +x appimagetool
           sed -i 's|AI\x02|\x00\x00\x00|' appimagetool || true # allow running on Docker without FUSE
 
@@ -75,7 +75,11 @@ jobs:
           SELF=$(readlink -f "$0")
           HERE=${SELF%/*}
           export PATH="${HERE}/usr/bin:${PATH}"
-          exec "${HERE}/usr/bin/openptz" ui "$@"
+          if [ $# -eq 0 ]; then
+              exec "${HERE}/usr/bin/openptz" ui
+          else
+              exec "${HERE}/usr/bin/openptz" "$@"
+          fi
           EOF
           chmod +x AppDir/AppRun
 

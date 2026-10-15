@@ -63,14 +63,12 @@ impl PresetManager {
 
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.config_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create config directory {:?}", parent)
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create config directory {:?}", parent))?;
         }
 
-        let file = File::create(&self.config_path).with_context(|| {
-            format!("Failed to create preset file {:?}", self.config_path)
-        })?;
+        let file = File::create(&self.config_path)
+            .with_context(|| format!("Failed to create preset file {:?}", self.config_path))?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, self)?;
         Ok(())
