@@ -857,9 +857,17 @@
             <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
           </svg>
           <p id="placeholderText">Превью камеры Logitech Rally</p>
-          <button class="btn btn-primary" id="btnStartVideo">
-            <span id="startVideoBtnText">Включить превью</span>
-          </button>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px;">
+            <button class="btn btn-primary" id="btnStartVideo">
+              <span id="startVideoBtnText">Включить превью</span>
+            </button>
+            <button class="btn btn-secondary" id="btnWakeCamera">
+              <span>Разбудить камеру (0°)</span>
+            </button>
+          </div>
+          <div id="cameraHint" style="font-size: 12px; color: var(--text-muted); max-width: 380px; text-align: center; margin-top: 10px; line-height: 1.4;">
+            Если камера припаркована вниз (-90°), нажмите «Разбудить камеру». При запросе браузера выберите «Разрешить доступ».
+          </div>
         </div>
 
         <div class="video-overlay" id="videoOverlay" style="display: none;">
@@ -1404,6 +1412,7 @@
     async function startCamera(preferredDeviceId = null) {
       const btnText = document.getElementById('startVideoBtnText');
       if (btnText) btnText.textContent = 'Подключение...';
+      apiPost('/api/wake').catch(() => {});
 
       try {
         if (currentStream) {
@@ -1583,6 +1592,22 @@
     startVideoBtn.addEventListener('click', () => {
       startCamera();
     });
+
+    const btnWakeCamera = document.getElementById('btnWakeCamera');
+    if (btnWakeCamera) {
+      btnWakeCamera.addEventListener('click', async () => {
+        try {
+          showToast('Разбуживание камеры...');
+          await apiPost('/api/wake');
+          await apiPost('/api/home');
+          showToast('Камера вернулась в положение (0°, 0°)');
+          await updateStatus();
+          startCamera();
+        } catch (e) {
+          showToast('Ошибка разбуживания: ' + e.message, true);
+        }
+      });
+    }
 
     // Crosshair & Fullscreen
     document.getElementById('btnToggleCrosshair').addEventListener('click', () => {

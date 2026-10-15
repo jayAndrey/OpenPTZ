@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Context, Result};
 use windows::core::{Interface, GUID, PCWSTR, VARIANT};
 use windows::Win32::Media::DirectShow::*;
+use windows::Win32::Media::KernelStreaming::*;
 use windows::Win32::System::Com::StructuredStorage::*;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Variant::*;
@@ -26,6 +27,8 @@ pub struct CameraDeviceImpl {
     filter: IBaseFilter,
     cam_control: Option<IAMCameraControl>,
     proc_amp: Option<IAMVideoProcAmp>,
+    ks_control: Option<IKsControl>,
+    xu_peripheral_node_id: Option<u32>,
     path: PathBuf,
     card_name: String,
     has_rally_xu: bool,
@@ -232,14 +235,52 @@ impl CameraDeviceImpl {
 
             let cam_control = filter.cast::<IAMCameraControl>().ok();
             let proc_amp = filter.cast::<IAMVideoProcAmp>().ok();
+            let ks_control: Option<IKsControl> = moniker
+                .BindToObject(None, None)
+                .ok()
+                .or_else(|| filter.cast::<IKsControl>().ok());
+
+            let mut xu_peripheral_node_id = None;
+            if let Some(ref ks) = ks_control {
+                if let Ok(topo) = ks.cast::<IKsTopologyInfo>() {
+                    if let Ok(num_nodes) = topo.NumNodes() {
+                        const LOGITECH_XU_PERIPHERAL: GUID =
+                            GUID::from_u128(0xffe52d21_8030_4e2c_82d9_f587d00540bd);
+                        for node_id in 0..num_nodes {
+                            let mut ext_prop = KSP_NODE::default();
+                            ext_prop.Property.Anonymous.Anonymous.Set = LOGITECH_XU_PERIPHERAL;
+                            ext_prop.Property.Anonymous.Anonymous.Id = 0;
+                            ext_prop.Property.Anonymous.Anonymous.Flags =
+                                KSPROPERTY_TYPE_SETSUPPORT | KSPROPERTY_TYPE_TOPOLOGY;
+                            ext_prop.NodeId = node_id;
+                            let mut bytes_returned = 0;
+                            let hr = ks.KsProperty(
+                                &ext_prop as *const _ as *const _,
+                                std::mem::size_of::<KSP_NODE>() as u32,
+                                std::ptr::null_mut(),
+                                0,
+                                &mut bytes_returned,
+                            );
+                            if hr.is_ok() {
+                                xu_peripheral_node_id = Some(node_id);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             let profile = crate::cameras::detect_profile(&selected_name, None);
-            let has_rally_xu = profile.capabilities().vendor_name == "Logitech"
+            let has_rally_xu = xu_peripheral_node_id.is_some()
+                || profile.capabilities().vendor_name == "Logitech"
                 || selected_name.to_lowercase().contains("rally");
 
             Ok(Self {
                 filter,
                 cam_control,
                 proc_amp,
+                ks_control,
+                xu_peripheral_node_id,
                 path: path_ref.to_path_buf(),
                 card_name: selected_name,
                 has_rally_xu,
@@ -286,6 +327,37 @@ impl CameraDeviceImpl {
 
     pub fn has_rally_xu(&self) -> bool {
         self.has_rally_xu
+    }
+
+    pub fn xu_set_peripheral_property(&self, property_id: u32, value: u32) -> Result<()> {
+        let (ks, node_id) = match (&self.ks_control, self.xu_peripheral_node_id) {
+            (Some(ks), Some(node_id)) => (ks, node_id),
+            _ => bail!("Logitech XU Peripheral control is not available on this device"),
+        };
+
+        const LOGITECH_XU_PERIPHERAL: GUID =
+            GUID::from_u128(0xffe52d21_8030_4e2c_82d9_f587d00540bd);
+
+        let mut ext_prop = KSP_NODE::default();
+        ext_prop.Property.Anonymous.Anonymous.Set = LOGITECH_XU_PERIPHERAL;
+        ext_prop.Property.Anonymous.Anonymous.Id = property_id;
+        ext_prop.Property.Anonymous.Anonymous.Flags =
+            KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_TOPOLOGY;
+        ext_prop.NodeId = node_id;
+
+        let mut val = value;
+        let mut bytes_returned = 0;
+        unsafe {
+            ks.KsProperty(
+                &ext_prop as *const _ as *const _,
+                std::mem::size_of::<KSP_NODE>() as u32,
+                &mut val as *mut _ as *mut _,
+                std::mem::size_of::<u32>() as u32,
+                &mut bytes_returned,
+            )
+            .context("Failed to send Logitech XU property")?;
+        }
+        Ok(())
     }
 
     pub fn query_all_ctrls(&self) -> Vec<ControlInfo> {
@@ -338,6 +410,9 @@ impl CameraDeviceImpl {
     // -------------------------------------------------------------
 
     pub fn get_pan_deg(&self) -> Result<f32> {
+        if self.xu_peripheral_node_id.is_some() || self.is_rally() {
+            return Ok(*self.cached_pan_deg.lock().unwrap());
+        }
         if let Some(ref cc) = self.cam_control {
             let mut min = 0;
             let mut max = 0;
@@ -405,12 +480,28 @@ impl CameraDeviceImpl {
         let target = (current + delta_deg).clamp(min_deg, max_deg);
         let actual_delta = target - current;
 
-        if let Some(ref cc) = self.cam_control {
-            let dir = if actual_delta > 0.0 { 1 } else if actual_delta < 0.0 { -1 } else { 0 };
-            if dir != 0 {
+        let dir: i8 = if actual_delta > 0.0 {
+            1
+        } else if actual_delta < 0.0 {
+            -1
+        } else {
+            0
+        };
+        if dir != 0 {
+            let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+            if self.xu_peripheral_node_id.is_some() {
+                let dw_val = (dir as u8 as u32) << 8;
+                let _ = self.xu_set_peripheral_property(1, dw_val);
+                std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+                let _ = self.xu_set_peripheral_property(1, 0);
+            } else if let Some(ref cc) = self.cam_control {
                 unsafe {
-                    let _ = cc.Set(10, dir, 0);
-                    let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+                    let _ = cc.Set(10, dir as i32, 0);
+                    let _ = cc.Set(
+                        CameraControl_Pan.0,
+                        target as i32,
+                        CameraControl_Flags_Manual.0,
+                    );
                     std::thread::sleep(std::time::Duration::from_millis(duration_ms));
                     let _ = cc.Set(10, 0, 0);
                 }
@@ -421,6 +512,9 @@ impl CameraDeviceImpl {
     }
 
     pub fn get_tilt_deg(&self) -> Result<f32> {
+        if self.xu_peripheral_node_id.is_some() || self.is_rally() {
+            return Ok(*self.cached_tilt_deg.lock().unwrap());
+        }
         if let Some(ref cc) = self.cam_control {
             let mut min = 0;
             let mut max = 0;
@@ -488,12 +582,28 @@ impl CameraDeviceImpl {
         let target = (current + delta_deg).clamp(min_deg, max_deg);
         let actual_delta = target - current;
 
-        if let Some(ref cc) = self.cam_control {
-            let dir = if actual_delta > 0.0 { 1 } else if actual_delta < 0.0 { -1 } else { 0 };
-            if dir != 0 {
+        let dir: i8 = if actual_delta > 0.0 {
+            -1
+        } else if actual_delta < 0.0 {
+            1
+        } else {
+            0
+        };
+        if dir != 0 {
+            let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+            if self.xu_peripheral_node_id.is_some() {
+                let dw_val = (dir as u8 as u32) << 24;
+                let _ = self.xu_set_peripheral_property(1, dw_val);
+                std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+                let _ = self.xu_set_peripheral_property(1, 0);
+            } else if let Some(ref cc) = self.cam_control {
                 unsafe {
-                    let _ = cc.Set(11, dir, 0);
-                    let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+                    let _ = cc.Set(11, dir as i32, 0);
+                    let _ = cc.Set(
+                        CameraControl_Tilt.0,
+                        target as i32,
+                        CameraControl_Flags_Manual.0,
+                    );
                     std::thread::sleep(std::time::Duration::from_millis(duration_ms));
                     let _ = cc.Set(11, 0, 0);
                 }
@@ -510,6 +620,9 @@ impl CameraDeviceImpl {
     }
 
     pub fn get_zoom_x(&self) -> Result<f32> {
+        if self.xu_peripheral_node_id.is_some() || self.is_rally() {
+            return Ok(*self.cached_zoom_x.lock().unwrap());
+        }
         if let Some(ref cc) = self.cam_control {
             let mut min = 0;
             let mut max = 0;
@@ -613,8 +726,15 @@ impl CameraDeviceImpl {
     }
 
     pub fn home(&self) -> Result<()> {
-        self.set_pan_deg(0.0)?;
-        self.set_tilt_deg(0.0)?;
+        if self.xu_peripheral_node_id.is_some() {
+            let _ = self.xu_set_peripheral_property(2, 3);
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        } else {
+            self.set_pan_deg(0.0)?;
+            self.set_tilt_deg(0.0)?;
+        }
+        *self.cached_pan_deg.lock().unwrap() = 0.0;
+        *self.cached_tilt_deg.lock().unwrap() = 0.0;
         self.set_zoom_x(1.0)?;
         Ok(())
     }
@@ -624,16 +744,20 @@ impl CameraDeviceImpl {
         self.home()
     }
 
-    pub fn recall_hardware_preset(&self, _preset_num: u8) -> Result<()> {
-        anyhow::bail!(
-            "Hardware EEPROM presets are not directly accessible via DirectShow on this camera"
-        )
+    pub fn recall_hardware_preset(&self, preset_num: u8) -> Result<()> {
+        if (1..=8).contains(&preset_num) && self.xu_peripheral_node_id.is_some() {
+            self.xu_set_peripheral_property(2, (preset_num as u32 - 1) + 12)?;
+            return Ok(());
+        }
+        anyhow::bail!("Hardware EEPROM presets are not directly accessible on this camera")
     }
 
-    pub fn save_hardware_preset(&self, _preset_num: u8) -> Result<()> {
-        anyhow::bail!(
-            "Hardware EEPROM presets are not directly accessible via DirectShow on this camera"
-        )
+    pub fn save_hardware_preset(&self, preset_num: u8) -> Result<()> {
+        if (1..=8).contains(&preset_num) && self.xu_peripheral_node_id.is_some() {
+            self.xu_set_peripheral_property(2, (preset_num as u32 - 1) + 4)?;
+            return Ok(());
+        }
+        anyhow::bail!("Hardware EEPROM presets are not directly accessible on this camera")
     }
 
     pub fn sleep_privacy(&self) -> Result<()> {

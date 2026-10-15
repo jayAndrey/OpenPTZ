@@ -128,6 +128,9 @@ pub enum Commands {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
     },
+
+    /// Run diagnostic motion test on hardware (Pan, Tilt, Zoom, Home)
+    TestMotion,
 }
 
 #[derive(Args, Debug)]

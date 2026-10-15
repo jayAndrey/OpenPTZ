@@ -125,6 +125,24 @@ impl ApiServer {
 
         if method == "POST" || method == "GET" {
             match path {
+                "/api/log" => {
+                    if let Some(msg) = params.get("msg") {
+                        eprintln!("[CLIENT LOG] {}", msg);
+                    }
+                    return (200, "application/json", r#"{"status":"ok"}"#.to_string());
+                }
+
+                "/api/wake" => {
+                    return match camera.wake_privacy() {
+                        Ok(()) => (
+                            200,
+                            "application/json",
+                            r#"{"status":"ok","action":"wake"}"#.to_string(),
+                        ),
+                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                    };
+                }
+
                 "/api/home" => {
                     return match camera.goto_home() {
                         Ok(()) => (
