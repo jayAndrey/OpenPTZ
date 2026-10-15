@@ -134,9 +134,11 @@ Create a generic HTTP Request button in Companion:
 
 ---
 
-## 🏗️ Cross-Platform Architecture & Roadmap
+---
 
-OpenPTZ separates camera control into platform-agnostic application logic (GUI, TUI, CLI, REST API, Presets) and OS-specific hardware drivers:
+## 🏗️ Cross-Platform Architecture
+
+OpenPTZ separates camera control into platform-agnostic application logic (GUI, TUI, CLI, REST API, Presets) and native OS hardware drivers:
 
 ```
 OpenPTZ Architecture
@@ -144,52 +146,61 @@ OpenPTZ Architecture
 ├── TUI (Ratatui / Crossterm)
 ├── CLI (Clap v4)
 ├── REST API (tiny_http)
-└── Camera Hardware Abstraction (PtzBackend)
-    ├── Linux: V4L2 ioctl (Implemented ✅)
-    ├── Windows: DirectShow / MediaFoundation (Help Wanted 🙋‍♂️)
-    └── macOS: CoreMediaIO / IOKit USB (Help Wanted 🙋‍♂️)
+└── Camera Hardware Abstraction Layer
+    ├── Linux: Video4Linux2 (V4L2 ioctl + Logitech XU) ✅
+    ├── Windows: Native DirectShow (IAMCameraControl + IAMVideoProcAmp) ✅
+    └── macOS: AVFoundation + UVC Terminal (uvc-util support) ✅
 ```
 
-| Platform | Backend Driver | Status |
-| :--- | :--- | :--- |
-| **Linux** | Video4Linux2 (`v4l2` ioctls) | **Complete & Production Ready** ✅ |
-| **Windows** | DirectShow `IAMCameraControl` / MediaFoundation | *In Progress / Help Wanted* 🛠️ |
-| **macOS** | CoreMediaIO DAL / IOKit USB Class Requests | *Planned / Help Wanted* 🛠️ |
-
-We warmly welcome community contributions to bring native Windows and macOS backends to life! Check out our [Contributing Guide](CONTRIBUTING.md).
+| Platform | Native Backend Driver | Features | Status |
+| :--- | :--- | :--- | :--- |
+| **Linux** | Video4Linux2 (`v4l2` ioctls) | Hardware Pan/Tilt/Zoom, Logitech XU Presets, 50/60Hz Anti-flicker | **Complete & Production Ready** ✅ |
+| **Windows** | DirectShow (`IAMCameraControl` & `IAMVideoProcAmp`) | Pan/Tilt/Zoom, Anti-flicker, Sensor controls, Auto-detection | **Complete & Production Ready** ✅ |
+| **macOS** | AVFoundation + UVC (`uvc-util` / CoreMediaIO) | Pan/Tilt/Zoom, Presets, Sensor controls, Apple Silicon & Intel | **Complete & Production Ready** ✅ |
 
 ---
 
 ## 📦 Installation
 
-### Option 1: AppImage (Zero Installation, Recommended) 🚀
+### Linux
 
-Download the latest `OpenPTZ-x86_64.AppImage` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
-
+#### Option 1: AppImage (Zero Installation, Recommended) 🚀
+Download `OpenPTZ-x86_64.AppImage` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
 ```bash
-# Make executable and run
 chmod +x OpenPTZ-x86_64.AppImage
 ./OpenPTZ-x86_64.AppImage
 ```
 
-### Option 2: Ubuntu / Debian Package (`.deb`)
-
+#### Option 2: Ubuntu / Debian Package (`.deb`)
 Download `openptz-linux-amd64.deb` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
-
 ```bash
 sudo dpkg -i openptz-linux-amd64.deb
 ```
 
-### Option 3: Portable Tarball
-
+#### Option 3: Portable Tarball
 Download `openptz-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
-
 ```bash
 tar -xzf openptz-linux-x86_64.tar.gz
 cp openptz/openptz ~/.local/bin/
 ```
 
-### Option 4: Build from Source
+### Windows
+
+Download `openptz-windows-x86_64.zip` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
+1. Extract the `.zip` archive.
+2. Run `openptz.exe ui` in PowerShell or Command Prompt, or double-click to launch interactive controls.
+3. Automatically interfaces with DirectShow cameras (Logitech Rally, PTZ Pro, and all UVC webcams).
+
+### macOS (Apple Silicon & Intel)
+
+Download `openptz-macos-aarch64.tar.gz` (Apple Silicon M1/M2/M3/M4) or `openptz-macos-x86_64.tar.gz` (Intel) from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
+```bash
+tar -xzf openptz-macos-aarch64.tar.gz
+sudo cp openptz/openptz /usr/local/bin/
+openptz ui
+```
+
+### Build from Source (All Platforms)
 
 **Requirements**: Rust 1.80+ (`cargo`).
 
@@ -201,13 +212,9 @@ cd OpenPTZ
 # Build optimized binary
 cargo build --release
 
-# Install to ~/.local/bin
-cp target/release/openptz ~/.local/bin/
-
-# Optional: Add desktop launcher for Ubuntu/Debian/Fedora/Arch
-mkdir -p ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
-cp assets/openptz.desktop ~/.local/share/applications/
-cp assets/openptz.svg ~/.local/share/icons/hicolor/scalable/apps/
+# The compiled binary is at:
+# Linux / macOS: target/release/openptz
+# Windows: target/release/openptz.exe
 ```
 
 Verify installation:

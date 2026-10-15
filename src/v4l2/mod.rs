@@ -1,5 +1,8 @@
-pub mod constants;
-pub mod device;
-pub mod ioctl;
+pub use crate::camera::*;
 
-pub use device::{CameraDevice, CameraStatus};
+#[cfg(target_os = "linux")]
+pub mod constants;
+#[cfg(target_os = "linux")]
+pub mod device;
+#[cfg(target_os = "linux")]
+pub mod ioctl;

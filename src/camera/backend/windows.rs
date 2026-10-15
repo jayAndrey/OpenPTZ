@@ -1,0 +1,874 @@
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use anyhow::{bail, Context, Result};
+use windows::core::{Interface, GUID, PCWSTR, VARIANT};
+use windows::Win32::Media::DirectShow::*;
+use windows::Win32::System::Com::StructuredStorage::*;
+use windows::Win32::System::Com::*;
+use windows::Win32::System::Variant::*;
+
+use crate::camera::constants::*;
+use crate::camera::types::*;
+
+// DirectShow Device Enumerator CLSIDs
+const CLSID_SYSTEM_DEVICE_ENUM: GUID = GUID::from_u128(0x62be5d10_60eb_11d0_bd3b_00a0c911ce86);
+const CLSID_VIDEO_INPUT_DEVICE_CATEGORY: GUID =
+    GUID::from_u128(0x860bb310_5d01_11d0_bd3b_00a0c911ce86);
+
+// VideoProcAmp Property for Anti-Flicker / Power Line Frequency
+const VIDEO_PROC_AMP_POWERLINE_FREQUENCY: VideoProcAmpProperty = VideoProcAmpProperty(13);
+
+pub struct CameraDeviceImpl {
+    filter: IBaseFilter,
+    cam_control: Option<IAMCameraControl>,
+    proc_amp: Option<IAMVideoProcAmp>,
+    path: PathBuf,
+    card_name: String,
+    has_rally_xu: bool,
+    // Software-tracked state for when camera properties are write-only or relative
+    cached_pan_deg: Mutex<f32>,
+    cached_tilt_deg: Mutex<f32>,
+    cached_zoom_x: Mutex<f32>,
+}
+
+unsafe impl Send for CameraDeviceImpl {}
+unsafe impl Sync for CameraDeviceImpl {}
+
+fn init_com() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+}
+
+fn read_variant_string(prop_bag: &IPropertyBag, prop_name: &str) -> Option<String> {
+    let wide_name: Vec<u16> = prop_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut var = VARIANT::default();
+    unsafe {
+        if prop_bag
+            .Read(PCWSTR(wide_name.as_ptr()), &mut var, None)
+            .is_ok()
+        {
+            let mut buf = [0u16; 512];
+            let res = if VariantToString(&var, &mut buf).is_ok() {
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                Some(String::from_utf16_lossy(&buf[..len]))
+            } else {
+                None
+            };
+            let _ = VariantClear(&mut var);
+            return res;
+        }
+    }
+    None
+}
+
+impl CameraDeviceImpl {
+    pub fn discover_devices() -> Vec<DeviceInfo> {
+        init_com();
+        let mut devices = Vec::new();
+
+        unsafe {
+            let dev_enum: ICreateDevEnum =
+                match CoCreateInstance(&CLSID_SYSTEM_DEVICE_ENUM, None, CLSCTX_INPROC_SERVER) {
+                    Ok(e) => e,
+                    Err(_) => return devices,
+                };
+
+            let mut enum_moniker: Option<IEnumMoniker> = None;
+            if dev_enum
+                .CreateClassEnumerator(&CLSID_VIDEO_INPUT_DEVICE_CATEGORY, &mut enum_moniker, 0)
+                .is_err()
+            {
+                return devices;
+            }
+
+            let enum_moniker = match enum_moniker {
+                Some(e) => e,
+                None => return devices,
+            };
+
+            let mut monikers: [Option<IMoniker>; 1] = [None];
+            let mut index = 0;
+
+            while enum_moniker.Next(&mut monikers, None).is_ok() {
+                let moniker = match monikers[0].take() {
+                    Some(m) => m,
+                    None => break,
+                };
+
+                let card_name = if let Ok(prop_bag) = moniker
+                    .BindToStorage::<Option<&IBindCtx>, Option<&IMoniker>, IPropertyBag>(None, None)
+                {
+                    read_variant_string(&prop_bag, "FriendlyName")
+                        .unwrap_or_else(|| format!("Camera {}", index))
+                } else {
+                    format!("Camera {}", index)
+                };
+
+                let dev_path_str = if let Ok(prop_bag) = moniker
+                    .BindToStorage::<Option<&IBindCtx>, Option<&IMoniker>, IPropertyBag>(None, None)
+                {
+                    read_variant_string(&prop_bag, "DevicePath")
+                        .unwrap_or_else(|| format!("video{}", index))
+                } else {
+                    format!("video{}", index)
+                };
+
+                let is_rally = card_name.to_lowercase().contains("rally")
+                    || dev_path_str.to_lowercase().contains("rally");
+
+                // Check PTZ support by testing IAMCameraControl
+                let mut supports_ptz = is_rally;
+                if let Ok(filter) = moniker
+                    .BindToObject::<Option<&IBindCtx>, Option<&IMoniker>, IBaseFilter>(None, None)
+                {
+                    if let Ok(cam_ctrl) = filter.cast::<IAMCameraControl>() {
+                        let mut min = 0;
+                        let mut max = 0;
+                        let mut step = 0;
+                        let mut def = 0;
+                        let mut flags = 0;
+                        if cam_ctrl
+                            .GetRange(
+                                CameraControl_Pan.0,
+                                &mut min,
+                                &mut max,
+                                &mut step,
+                                &mut def,
+                                &mut flags,
+                            )
+                            .is_ok()
+                        {
+                            supports_ptz = true;
+                        }
+                    }
+                }
+
+                devices.push(DeviceInfo {
+                    path: PathBuf::from(&dev_path_str),
+                    card_name,
+                    driver: "DirectShow".to_string(),
+                    bus_info: format!("Device {}", index),
+                    is_rally,
+                    supports_ptz,
+                });
+
+                index += 1;
+            }
+        }
+
+        devices
+    }
+
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        init_com();
+        let path_ref = path.as_ref();
+        let path_str = path_ref.to_string_lossy().to_string();
+
+        unsafe {
+            let dev_enum: ICreateDevEnum =
+                CoCreateInstance(&CLSID_SYSTEM_DEVICE_ENUM, None, CLSCTX_INPROC_SERVER)
+                    .context("Failed to create SystemDeviceEnum")?;
+
+            let mut enum_moniker: Option<IEnumMoniker> = None;
+            dev_enum
+                .CreateClassEnumerator(&CLSID_VIDEO_INPUT_DEVICE_CATEGORY, &mut enum_moniker, 0)
+                .context("Failed to enumerate VideoInputDeviceCategory")?;
+
+            let enum_moniker = enum_moniker.context("No video input devices found on system")?;
+            let mut monikers: [Option<IMoniker>; 1] = [None];
+            let mut index = 0;
+            let mut selected_moniker = None;
+            let mut selected_name = String::new();
+
+            while enum_moniker.Next(&mut monikers, None).is_ok() {
+                let moniker = match monikers[0].take() {
+                    Some(m) => m,
+                    None => break,
+                };
+
+                let name = if let Ok(prop_bag) = moniker
+                    .BindToStorage::<Option<&IBindCtx>, Option<&IMoniker>, IPropertyBag>(None, None)
+                {
+                    read_variant_string(&prop_bag, "FriendlyName")
+                        .unwrap_or_else(|| format!("Camera {}", index))
+                } else {
+                    format!("Camera {}", index)
+                };
+
+                let dev_path = if let Ok(prop_bag) = moniker
+                    .BindToStorage::<Option<&IBindCtx>, Option<&IMoniker>, IPropertyBag>(None, None)
+                {
+                    read_variant_string(&prop_bag, "DevicePath")
+                        .unwrap_or_else(|| format!("video{}", index))
+                } else {
+                    format!("video{}", index)
+                };
+
+                // Match by exact path, index, or name substring
+                if path_str == dev_path
+                    || path_str == index.to_string()
+                    || path_str == format!("video{}", index)
+                    || name.to_lowercase().contains(&path_str.to_lowercase())
+                {
+                    selected_moniker = Some(moniker);
+                    selected_name = name;
+                    break;
+                }
+
+                index += 1;
+            }
+
+            let moniker = selected_moniker
+                .with_context(|| format!("Camera device '{:?}' not found", path_ref))?;
+            let filter: IBaseFilter = moniker
+                .BindToObject(None, None)
+                .context("Failed to bind camera moniker to IBaseFilter")?;
+
+            let cam_control = filter.cast::<IAMCameraControl>().ok();
+            let proc_amp = filter.cast::<IAMVideoProcAmp>().ok();
+            let has_rally_xu = selected_name.to_lowercase().contains("rally");
+
+            Ok(Self {
+                filter,
+                cam_control,
+                proc_amp,
+                path: path_ref.to_path_buf(),
+                card_name: selected_name,
+                has_rally_xu,
+                cached_pan_deg: Mutex::new(0.0),
+                cached_tilt_deg: Mutex::new(0.0),
+                cached_zoom_x: Mutex::new(1.0),
+            })
+        }
+    }
+
+    pub fn open_default() -> Result<Self> {
+        let devices = Self::discover_devices();
+        if devices.is_empty() {
+            bail!("No video capture devices found on Windows system.");
+        }
+
+        // 1. Look for Logitech Rally first
+        if let Some(rally) = devices.iter().find(|d| d.is_rally) {
+            return Self::open(&rally.path);
+        }
+
+        // 2. Look for any camera supporting PTZ
+        if let Some(ptz) = devices.iter().find(|d| d.supports_ptz) {
+            return Self::open(&ptz.path);
+        }
+
+        // 3. Fallback to first device
+        Self::open(&devices[0].path)
+    }
+
+    pub fn card_name(&self) -> &str {
+        &self.card_name
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn has_rally_xu(&self) -> bool {
+        self.has_rally_xu
+    }
+
+    pub fn query_all_ctrls(&self) -> Vec<ControlInfo> {
+        let mut ctrls = Vec::new();
+        if let Some(ref cc) = self.cam_control {
+            let ptz_props = [
+                (CameraControl_Pan.0, "Pan"),
+                (CameraControl_Tilt.0, "Tilt"),
+                (CameraControl_Zoom.0, "Zoom"),
+                (CameraControl_Exposure.0, "Exposure"),
+                (CameraControl_Focus.0, "Focus"),
+            ];
+            for (prop_id, name) in ptz_props {
+                let mut min = 0;
+                let mut max = 0;
+                let mut step = 0;
+                let mut def = 0;
+                let mut flags = 0;
+                unsafe {
+                    if cc
+                        .GetRange(prop_id, &mut min, &mut max, &mut step, &mut def, &mut flags)
+                        .is_ok()
+                    {
+                        let mut cur = 0;
+                        let mut cur_flags = 0;
+                        let current_val = if cc.Get(prop_id, &mut cur, &mut cur_flags).is_ok() {
+                            Some(cur)
+                        } else {
+                            None
+                        };
+                        ctrls.push(ControlInfo {
+                            id: prop_id as u32,
+                            name: name.to_string(),
+                            ctrl_type: 1,
+                            min,
+                            max,
+                            step,
+                            default_val: def,
+                            current_val,
+                        });
+                    }
+                }
+            }
+        }
+        ctrls
+    }
+
+    // -------------------------------------------------------------
+    // High-Level PTZ Operations
+    // -------------------------------------------------------------
+
+    pub fn get_pan_deg(&self) -> Result<f32> {
+        if let Some(ref cc) = self.cam_control {
+            let mut min = 0;
+            let mut max = 0;
+            let mut step = 0;
+            let mut def = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .GetRange(
+                        CameraControl_Pan.0,
+                        &mut min,
+                        &mut max,
+                        &mut step,
+                        &mut def,
+                        &mut flags,
+                    )
+                    .is_ok()
+                {
+                    let mut val = 0;
+                    let mut cur_flags = 0;
+                    if cc
+                        .Get(CameraControl_Pan.0, &mut val, &mut cur_flags)
+                        .is_ok()
+                    {
+                        let deg = if max.abs() > 360 {
+                            val as f32 / UNITS_PER_DEGREE
+                        } else {
+                            val as f32
+                        };
+                        *self.cached_pan_deg.lock().unwrap() = deg;
+                        return Ok(deg);
+                    }
+                }
+            }
+        }
+        Ok(*self.cached_pan_deg.lock().unwrap())
+    }
+
+    pub fn set_pan_deg(&self, deg: f32) -> Result<()> {
+        let clamped_deg = deg.clamp(-90.0, 90.0);
+        *self.cached_pan_deg.lock().unwrap() = clamped_deg;
+
+        if let Some(ref cc) = self.cam_control {
+            let mut min = 0;
+            let mut max = 0;
+            let mut step = 0;
+            let mut def = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .GetRange(
+                        CameraControl_Pan.0,
+                        &mut min,
+                        &mut max,
+                        &mut step,
+                        &mut def,
+                        &mut flags,
+                    )
+                    .is_ok()
+                {
+                    let raw = if max.abs() > 360 {
+                        (clamped_deg * UNITS_PER_DEGREE).round() as i32
+                    } else {
+                        clamped_deg.round() as i32
+                    }
+                    .clamp(min, max);
+                    let _ = cc.Set(CameraControl_Pan.0, raw, CameraControl_Flags_Manual.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn pan_relative(&self, delta_deg: f32) -> Result<f32> {
+        let current = self.get_pan_deg()?;
+        let target = current + delta_deg;
+        self.set_pan_deg(target)?;
+        self.get_pan_deg()
+    }
+
+    pub fn get_tilt_deg(&self) -> Result<f32> {
+        if let Some(ref cc) = self.cam_control {
+            let mut min = 0;
+            let mut max = 0;
+            let mut step = 0;
+            let mut def = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .GetRange(
+                        CameraControl_Tilt.0,
+                        &mut min,
+                        &mut max,
+                        &mut step,
+                        &mut def,
+                        &mut flags,
+                    )
+                    .is_ok()
+                {
+                    let mut val = 0;
+                    let mut cur_flags = 0;
+                    if cc
+                        .Get(CameraControl_Tilt.0, &mut val, &mut cur_flags)
+                        .is_ok()
+                    {
+                        let deg = if max.abs() > 360 {
+                            val as f32 / UNITS_PER_DEGREE
+                        } else {
+                            val as f32
+                        };
+                        *self.cached_tilt_deg.lock().unwrap() = deg;
+                        return Ok(deg);
+                    }
+                }
+            }
+        }
+        Ok(*self.cached_tilt_deg.lock().unwrap())
+    }
+
+    pub fn set_tilt_deg(&self, deg: f32) -> Result<()> {
+        let clamped_deg = deg.clamp(-90.0, 50.0);
+        *self.cached_tilt_deg.lock().unwrap() = clamped_deg;
+
+        if let Some(ref cc) = self.cam_control {
+            let mut min = 0;
+            let mut max = 0;
+            let mut step = 0;
+            let mut def = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .GetRange(
+                        CameraControl_Tilt.0,
+                        &mut min,
+                        &mut max,
+                        &mut step,
+                        &mut def,
+                        &mut flags,
+                    )
+                    .is_ok()
+                {
+                    let raw = if max.abs() > 360 {
+                        (clamped_deg * UNITS_PER_DEGREE).round() as i32
+                    } else {
+                        clamped_deg.round() as i32
+                    }
+                    .clamp(min, max);
+                    let _ = cc.Set(CameraControl_Tilt.0, raw, CameraControl_Flags_Manual.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn tilt_relative(&self, delta_deg: f32) -> Result<f32> {
+        let current = self.get_tilt_deg()?;
+        let target = current + delta_deg;
+        self.set_tilt_deg(target)?;
+        self.get_tilt_deg()
+    }
+
+    pub fn move_pan_tilt(&self, pan_deg: f32, tilt_deg: f32) -> Result<()> {
+        self.set_pan_deg(pan_deg)?;
+        self.set_tilt_deg(tilt_deg)?;
+        Ok(())
+    }
+
+    pub fn get_zoom_x(&self) -> Result<f32> {
+        if let Some(ref cc) = self.cam_control {
+            let mut min = 0;
+            let mut max = 0;
+            let mut step = 0;
+            let mut def = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .GetRange(
+                        CameraControl_Zoom.0,
+                        &mut min,
+                        &mut max,
+                        &mut step,
+                        &mut def,
+                        &mut flags,
+                    )
+                    .is_ok()
+                {
+                    let mut val = 0;
+                    let mut cur_flags = 0;
+                    if cc
+                        .Get(CameraControl_Zoom.0, &mut val, &mut cur_flags)
+                        .is_ok()
+                    {
+                        let z = if max >= 100 {
+                            val as f32 / 100.0
+                        } else if max > min {
+                            1.0 + (val - min) as f32 / (max - min) as f32 * 14.0
+                        } else {
+                            val as f32
+                        };
+                        *self.cached_zoom_x.lock().unwrap() = z;
+                        return Ok(z);
+                    }
+                }
+            }
+        }
+        Ok(*self.cached_zoom_x.lock().unwrap())
+    }
+
+    pub fn set_zoom_x(&self, x: f32) -> Result<()> {
+        let clamped_x = x.clamp(1.0, 15.0);
+        *self.cached_zoom_x.lock().unwrap() = clamped_x;
+
+        if let Some(ref cc) = self.cam_control {
+            let mut min = 0;
+            let mut max = 0;
+            let mut step = 0;
+            let mut def = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .GetRange(
+                        CameraControl_Zoom.0,
+                        &mut min,
+                        &mut max,
+                        &mut step,
+                        &mut def,
+                        &mut flags,
+                    )
+                    .is_ok()
+                {
+                    let raw = if max >= 100 {
+                        (clamped_x * 100.0).round() as i32
+                    } else {
+                        min + ((clamped_x - 1.0) / 14.0 * (max - min) as f32).round() as i32
+                    }
+                    .clamp(min, max);
+                    let _ = cc.Set(CameraControl_Zoom.0, raw, CameraControl_Flags_Manual.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn zoom_relative(&self, delta_x: f32) -> Result<f32> {
+        let current = self.get_zoom_x()?;
+        let target = current + delta_x;
+        self.set_zoom_x(target)?;
+        self.get_zoom_x()
+    }
+
+    pub fn set_pan_speed(&self, _speed: i32) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn set_tilt_speed(&self, _speed: i32) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn stop_motion(&self) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn goto_home(&self) -> Result<()> {
+        self.set_pan_deg(0.0)?;
+        self.set_tilt_deg(0.0)?;
+        self.set_zoom_x(1.0)?;
+        Ok(())
+    }
+
+    pub fn get_power_line_frequency(&self) -> Result<i32> {
+        if let Some(ref pa) = self.proc_amp {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if pa
+                    .Get(VIDEO_PROC_AMP_POWERLINE_FREQUENCY.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(val);
+                }
+            }
+        }
+        Ok(0)
+    }
+
+    pub fn set_power_line_frequency(&self, hz: u32) -> Result<()> {
+        let val = match hz {
+            0 => FLICKER_DISABLED,
+            50 => FLICKER_50HZ,
+            60 => FLICKER_60HZ,
+            _ => bail!("Invalid power line frequency: {} (choose 0, 50, or 60)", hz),
+        };
+        if let Some(ref pa) = self.proc_amp {
+            unsafe {
+                let _ = pa.Set(
+                    VIDEO_PROC_AMP_POWERLINE_FREQUENCY.0,
+                    val,
+                    VideoProcAmp_Flags_Manual.0,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn cycle_power_line_frequency(&self) -> Result<i32> {
+        let current = self.get_power_line_frequency().unwrap_or(0);
+        let next = match current {
+            FLICKER_DISABLED => FLICKER_50HZ,
+            FLICKER_50HZ => FLICKER_60HZ,
+            _ => FLICKER_DISABLED,
+        };
+        self.set_power_line_frequency(next as u32)?;
+        Ok(next)
+    }
+
+    pub fn get_brightness(&self) -> Result<i32> {
+        if let Some(ref pa) = self.proc_amp {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if pa
+                    .Get(VideoProcAmp_Brightness.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(val);
+                }
+            }
+        }
+        bail!("Brightness not supported")
+    }
+
+    pub fn set_brightness(&self, val: i32) -> Result<()> {
+        if let Some(ref pa) = self.proc_amp {
+            unsafe {
+                let _ = pa.Set(
+                    VideoProcAmp_Brightness.0,
+                    val.clamp(0, 255),
+                    VideoProcAmp_Flags_Manual.0,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_contrast(&self) -> Result<i32> {
+        if let Some(ref pa) = self.proc_amp {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if pa
+                    .Get(VideoProcAmp_Contrast.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(val);
+                }
+            }
+        }
+        bail!("Contrast not supported")
+    }
+
+    pub fn set_contrast(&self, val: i32) -> Result<()> {
+        if let Some(ref pa) = self.proc_amp {
+            unsafe {
+                let _ = pa.Set(
+                    VideoProcAmp_Contrast.0,
+                    val.clamp(0, 255),
+                    VideoProcAmp_Flags_Manual.0,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_saturation(&self) -> Result<i32> {
+        if let Some(ref pa) = self.proc_amp {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if pa
+                    .Get(VideoProcAmp_Saturation.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(val);
+                }
+            }
+        }
+        bail!("Saturation not supported")
+    }
+
+    pub fn set_saturation(&self, val: i32) -> Result<()> {
+        if let Some(ref pa) = self.proc_amp {
+            unsafe {
+                let _ = pa.Set(
+                    VideoProcAmp_Saturation.0,
+                    val.clamp(0, 255),
+                    VideoProcAmp_Flags_Manual.0,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_sharpness(&self) -> Result<i32> {
+        if let Some(ref pa) = self.proc_amp {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if pa
+                    .Get(VideoProcAmp_Sharpness.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(val);
+                }
+            }
+        }
+        bail!("Sharpness not supported")
+    }
+
+    pub fn set_sharpness(&self, val: i32) -> Result<()> {
+        if let Some(ref pa) = self.proc_amp {
+            unsafe {
+                let _ = pa.Set(
+                    VideoProcAmp_Sharpness.0,
+                    val.clamp(0, 255),
+                    VideoProcAmp_Flags_Manual.0,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_auto_exposure(&self) -> Result<i32> {
+        if let Some(ref cc) = self.cam_control {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .Get(CameraControl_Exposure.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(if flags == CameraControl_Flags_Auto.0 {
+                        3
+                    } else {
+                        1
+                    });
+                }
+            }
+        }
+        Ok(1)
+    }
+
+    pub fn set_auto_exposure(&self, auto: bool) -> Result<()> {
+        if let Some(ref cc) = self.cam_control {
+            let flags = if auto {
+                CameraControl_Flags_Auto.0
+            } else {
+                CameraControl_Flags_Manual.0
+            };
+            unsafe {
+                let _ = cc.Set(CameraControl_Exposure.0, 0, flags);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_exposure_time(&self) -> Result<i32> {
+        if let Some(ref cc) = self.cam_control {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc
+                    .Get(CameraControl_Exposure.0, &mut val, &mut flags)
+                    .is_ok()
+                {
+                    return Ok(val);
+                }
+            }
+        }
+        bail!("Exposure time not supported")
+    }
+
+    pub fn set_exposure_time(&self, val: i32) -> Result<()> {
+        if let Some(ref cc) = self.cam_control {
+            unsafe {
+                let _ = cc.Set(CameraControl_Exposure.0, val, CameraControl_Flags_Manual.0);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_auto_focus(&self) -> Result<bool> {
+        if let Some(ref cc) = self.cam_control {
+            let mut val = 0;
+            let mut flags = 0;
+            unsafe {
+                if cc.Get(CameraControl_Focus.0, &mut val, &mut flags).is_ok() {
+                    return Ok(flags == CameraControl_Flags_Auto.0);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn set_auto_focus(&self, auto: bool) -> Result<()> {
+        if let Some(ref cc) = self.cam_control {
+            let flags = if auto {
+                CameraControl_Flags_Auto.0
+            } else {
+                CameraControl_Flags_Manual.0
+            };
+            unsafe {
+                let _ = cc.Set(CameraControl_Focus.0, 0, flags);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_status(&self) -> CameraStatus {
+        let pan_deg = self.get_pan_deg().unwrap_or(0.0);
+        let tilt_deg = self.get_tilt_deg().unwrap_or(0.0);
+        let zoom_x = self.get_zoom_x().unwrap_or(1.0);
+
+        CameraStatus {
+            device_path: self.path.to_string_lossy().to_string(),
+            card_name: self.card_name.clone(),
+            pan_deg,
+            pan_raw: deg_to_raw(pan_deg),
+            tilt_deg,
+            tilt_raw: deg_to_raw(tilt_deg),
+            zoom_x,
+            zoom_raw: zoom_x_to_raw(zoom_x),
+            brightness: self.get_brightness().ok(),
+            contrast: self.get_contrast().ok(),
+            saturation: self.get_saturation().ok(),
+            sharpness: self.get_sharpness().ok(),
+            power_line_frequency: self.get_power_line_frequency().ok(),
+            auto_exposure: self.get_auto_exposure().ok(),
+            exposure_time: self.get_exposure_time().ok(),
+            auto_focus: self.get_auto_focus().ok(),
+            white_balance_temp: None,
+            auto_white_balance: None,
+        }
+    }
+}

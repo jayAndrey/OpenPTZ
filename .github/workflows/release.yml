@@ -52,12 +52,10 @@ jobs:
       # 3. Package AppImage
       - name: Build AppImage
         run: |
-          # Download appimagetool
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
           chmod +x appimagetool
-          sed -i 's|AI\x02|\x00\x00\x00|' appimagetool || true # allow running on Docker without FUSE
+          sed -i 's|AI\x02|\x00\x00\x00|' appimagetool || true
 
-          # Prepare AppDir structure
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps
           mkdir -p AppDir/usr/share/applications
@@ -69,7 +67,6 @@ jobs:
           cp assets/openptz.svg AppDir/openptz.svg
           cp assets/openptz.svg AppDir/usr/share/icons/hicolor/scalable/apps/
 
-          # Create AppRun entrypoint
           cat << 'EOF' > AppDir/AppRun
           #!/bin/sh
           SELF=$(readlink -f "$0")
@@ -83,15 +80,111 @@ jobs:
           EOF
           chmod +x AppDir/AppRun
 
-          # Build the AppImage
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir OpenPTZ-x86_64.AppImage
 
-      # 4. Generate Checksums
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: |
+            OpenPTZ-x86_64.AppImage
+            openptz-linux-amd64.deb
+            openptz-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Build Windows Release (x86_64 Zip)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path package/openptz
+          Copy-Item target/release/openptz.exe package/openptz/
+          Copy-Item README.md package/openptz/
+          Copy-Item LICENSE-MIT package/openptz/
+          Copy-Item LICENSE-APACHE package/openptz/
+          Compress-Archive -Path package/openptz -DestinationPath openptz-windows-x86_64.zip
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: openptz-windows-x86_64.zip
+
+  build-macos:
+    name: Build macOS Release (Universal / Apple Silicon & Intel)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchains
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+
+      - name: Package macOS Tarballs
+        run: |
+          # Intel (x86_64)
+          mkdir -p package-intel/openptz
+          cp target/x86_64-apple-darwin/release/openptz package-intel/openptz/
+          cp README.md LICENSE-MIT LICENSE-APACHE package-intel/openptz/
+          tar -czvf openptz-macos-x86_64.tar.gz -C package-intel openptz
+
+          # Apple Silicon (aarch64)
+          mkdir -p package-arm/openptz
+          cp target/aarch64-apple-darwin/release/openptz package-arm/openptz/
+          cp README.md LICENSE-MIT LICENSE-APACHE package-arm/openptz/
+          tar -czvf openptz-macos-aarch64.tar.gz -C package-arm openptz
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: |
+            openptz-macos-x86_64.tar.gz
+            openptz-macos-aarch64.tar.gz
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
       - name: Generate SHA256 checksums
         run: |
-          sha256sum openptz-linux-x86_64.tar.gz OpenPTZ-x86_64.AppImage openptz-linux-amd64.deb > SHA256SUMS.txt
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      # 5. Create GitHub Release
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -100,8 +193,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: |
-            OpenPTZ-x86_64.AppImage
-            openptz-linux-amd64.deb
-            openptz-linux-x86_64.tar.gz
-            SHA256SUMS.txt
+          files: artifacts/*
