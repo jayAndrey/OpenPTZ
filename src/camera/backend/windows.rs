@@ -381,36 +381,13 @@ impl CameraDeviceImpl {
         let min_deg = limits.pan_raw_to_deg(limits.pan_min);
         let max_deg = limits.pan_raw_to_deg(limits.pan_max);
         let clamped_deg = deg.clamp(min_deg, max_deg);
-        *self.cached_pan_deg.lock().unwrap() = clamped_deg;
 
-        if let Some(ref cc) = self.cam_control {
-            let mut min = 0;
-            let mut max = 0;
-            let mut step = 0;
-            let mut def = 0;
-            let mut flags = 0;
-            unsafe {
-                if cc
-                    .GetRange(
-                        CameraControl_Pan.0,
-                        &mut min,
-                        &mut max,
-                        &mut step,
-                        &mut def,
-                        &mut flags,
-                    )
-                    .is_ok()
-                {
-                    let raw = if max.abs() > 360 {
-                        limits.deg_to_pan_raw(clamped_deg)
-                    } else {
-                        clamped_deg.round() as i32
-                    }
-                    .clamp(min, max);
-                    let _ = cc.Set(CameraControl_Pan.0, raw, CameraControl_Flags_Manual.0);
-                }
-            }
+        let current = *self.cached_pan_deg.lock().unwrap();
+        let delta = clamped_deg - current;
+        if delta.abs() > 0.2 {
+            self.pan_relative(delta)?;
         }
+        *self.cached_pan_deg.lock().unwrap() = clamped_deg;
         Ok(())
     }
 
@@ -420,10 +397,27 @@ impl CameraDeviceImpl {
     }
 
     pub fn pan_relative(&self, delta_deg: f32) -> Result<f32> {
-        let current = self.get_pan_deg()?;
-        let target = current + delta_deg;
-        self.set_pan_deg(target)?;
-        self.get_pan_deg()
+        let limits = self.profile.limits();
+        let min_deg = limits.pan_raw_to_deg(limits.pan_min);
+        let max_deg = limits.pan_raw_to_deg(limits.pan_max);
+
+        let current = *self.cached_pan_deg.lock().unwrap();
+        let target = (current + delta_deg).clamp(min_deg, max_deg);
+        let actual_delta = target - current;
+
+        if let Some(ref cc) = self.cam_control {
+            let dir = if actual_delta > 0.0 { 1 } else if actual_delta < 0.0 { -1 } else { 0 };
+            if dir != 0 {
+                unsafe {
+                    let _ = cc.Set(10, dir, 0);
+                    let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+                    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+                    let _ = cc.Set(10, 0, 0);
+                }
+            }
+        }
+        *self.cached_pan_deg.lock().unwrap() = target;
+        Ok(target)
     }
 
     pub fn get_tilt_deg(&self) -> Result<f32> {
@@ -470,36 +464,13 @@ impl CameraDeviceImpl {
         let min_deg = limits.tilt_raw_to_deg(limits.tilt_min);
         let max_deg = limits.tilt_raw_to_deg(limits.tilt_max);
         let clamped_deg = deg.clamp(min_deg, max_deg);
-        *self.cached_tilt_deg.lock().unwrap() = clamped_deg;
 
-        if let Some(ref cc) = self.cam_control {
-            let mut min = 0;
-            let mut max = 0;
-            let mut step = 0;
-            let mut def = 0;
-            let mut flags = 0;
-            unsafe {
-                if cc
-                    .GetRange(
-                        CameraControl_Tilt.0,
-                        &mut min,
-                        &mut max,
-                        &mut step,
-                        &mut def,
-                        &mut flags,
-                    )
-                    .is_ok()
-                {
-                    let raw = if max.abs() > 360 {
-                        limits.deg_to_tilt_raw(clamped_deg)
-                    } else {
-                        clamped_deg.round() as i32
-                    }
-                    .clamp(min, max);
-                    let _ = cc.Set(CameraControl_Tilt.0, raw, CameraControl_Flags_Manual.0);
-                }
-            }
+        let current = *self.cached_tilt_deg.lock().unwrap();
+        let delta = clamped_deg - current;
+        if delta.abs() > 0.2 {
+            self.tilt_relative(delta)?;
         }
+        *self.cached_tilt_deg.lock().unwrap() = clamped_deg;
         Ok(())
     }
 
@@ -509,10 +480,27 @@ impl CameraDeviceImpl {
     }
 
     pub fn tilt_relative(&self, delta_deg: f32) -> Result<f32> {
-        let current = self.get_tilt_deg()?;
-        let target = current + delta_deg;
-        self.set_tilt_deg(target)?;
-        self.get_tilt_deg()
+        let limits = self.profile.limits();
+        let min_deg = limits.tilt_raw_to_deg(limits.tilt_min);
+        let max_deg = limits.tilt_raw_to_deg(limits.tilt_max);
+
+        let current = *self.cached_tilt_deg.lock().unwrap();
+        let target = (current + delta_deg).clamp(min_deg, max_deg);
+        let actual_delta = target - current;
+
+        if let Some(ref cc) = self.cam_control {
+            let dir = if actual_delta > 0.0 { 1 } else if actual_delta < 0.0 { -1 } else { 0 };
+            if dir != 0 {
+                unsafe {
+                    let _ = cc.Set(11, dir, 0);
+                    let duration_ms = (actual_delta.abs() * 35.0).clamp(60.0, 1500.0) as u64;
+                    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+                    let _ = cc.Set(11, 0, 0);
+                }
+            }
+        }
+        *self.cached_tilt_deg.lock().unwrap() = target;
+        Ok(target)
     }
 
     pub fn move_pan_tilt(&self, pan_deg: f32, tilt_deg: f32) -> Result<()> {

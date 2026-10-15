@@ -1408,17 +1408,37 @@
       try {
         if (currentStream) {
           currentStream.getTracks().forEach(t => t.stop());
+          currentStream = null;
+          await new Promise(r => setTimeout(r, 400)); // Crucial delay for Windows UVC driver cleanup
+        }
+
+        async function requestUserMediaSafe(constraints) {
+          try {
+            return await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (err) {
+            // Progressive fallback
+            if (constraints.video && typeof constraints.video === 'object') {
+              try {
+                // Try without ideal width/height constraints
+                const fallbackConstraints = {
+                  video: constraints.video.deviceId ? { deviceId: constraints.video.deviceId } : true
+                };
+                return await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+              } catch (err2) {
+                // Ultimate fallback
+                return await navigator.mediaDevices.getUserMedia({ video: true });
+              }
+            }
+            throw err;
+          }
         }
 
         let stream = null;
         if (!preferredDeviceId) {
-          // Initial stream request to unlock devices & permissions
-          const initialStream = await navigator.mediaDevices.getUserMedia(getConstraints(null, selectedResolution));
-          
+          const initialStream = await requestUserMediaSafe(getConstraints(null, selectedResolution));
           const devices = await navigator.mediaDevices.enumerateDevices();
           const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-          // Look for Logitech Rally
           const rally = videoDevices.find(d => {
             const l = (d.label || '').toLowerCase();
             return l.includes('rally') || (l.includes('logitech') && !l.includes('mic'));
@@ -1429,7 +1449,8 @@
             const activeLabel = activeTrack ? activeTrack.label.toLowerCase() : '';
             if (!activeLabel.includes('rally')) {
               initialStream.getTracks().forEach(t => t.stop());
-              stream = await navigator.mediaDevices.getUserMedia(getConstraints(rally.deviceId, selectedResolution));
+              await new Promise(r => setTimeout(r, 400));
+              stream = await requestUserMediaSafe(getConstraints(rally.deviceId, selectedResolution));
               activeCameraDeviceId = rally.deviceId;
             } else {
               stream = initialStream;
@@ -1441,13 +1462,15 @@
             if (track) activeCameraDeviceId = track.getSettings().deviceId;
           }
         } else {
-          stream = await navigator.mediaDevices.getUserMedia(getConstraints(preferredDeviceId, selectedResolution));
+          stream = await requestUserMediaSafe(getConstraints(preferredDeviceId, selectedResolution));
           activeCameraDeviceId = preferredDeviceId;
         }
 
         currentStream = stream;
         videoElem.srcObject = stream;
-        await videoElem.play().catch(() => {});
+        try {
+          await videoElem.play();
+        } catch (_) {}
 
         videoPlaceholder.style.display = 'none';
         videoOverlay.style.display = 'flex';
@@ -1458,7 +1481,12 @@
         console.warn('Camera preview init error:', err);
         videoPlaceholder.style.display = 'flex';
         if (btnText) btnText.textContent = 'Включить превью камеры';
-        showToast('Ошибка камеры: ' + err.message, true);
+        const msg = err.name === 'NotReadableError' 
+          ? 'Камера занята другим приложением (Teams/OBS/Zoom)' 
+          : err.name === 'NotAllowedError' 
+          ? 'Доступ к камере заблокирован в браузере' 
+          : err.message;
+        showToast('Ошибка камеры: ' + msg, true);
       }
     }
 
