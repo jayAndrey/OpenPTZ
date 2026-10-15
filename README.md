@@ -162,7 +162,34 @@ We warmly welcome community contributions to bring native Windows and macOS back
 
 ## 📦 Installation
 
-### From Source (All Linux Distributions)
+### Option 1: AppImage (Zero Installation, Recommended) 🚀
+
+Download the latest `OpenPTZ-x86_64.AppImage` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
+
+```bash
+# Make executable and run
+chmod +x OpenPTZ-x86_64.AppImage
+./OpenPTZ-x86_64.AppImage
+```
+
+### Option 2: Ubuntu / Debian Package (`.deb`)
+
+Download `openptz-linux-amd64.deb` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
+
+```bash
+sudo dpkg -i openptz-linux-amd64.deb
+```
+
+### Option 3: Portable Tarball
+
+Download `openptz-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/jayAndrey/OpenPTZ/releases):
+
+```bash
+tar -xzf openptz-linux-x86_64.tar.gz
+cp openptz/openptz ~/.local/bin/
+```
+
+### Option 4: Build from Source
 
 **Requirements**: Rust 1.80+ (`cargo`).
 

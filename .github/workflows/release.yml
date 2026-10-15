@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux Release (AppImage, Deb & Tarball)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install build tools and cargo-deb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 file wget
+          cargo install cargo-deb --locked
+
+      - name: Build release binary
+        run: cargo build --release
+
+      # 1. Package standalone tarball
+      - name: Create Tarball bundle
+        run: |
+          mkdir -p package/openptz
+          cp target/release/openptz package/openptz/
+          cp README.md LICENSE-MIT LICENSE-APACHE package/openptz/
+          cp -r assets package/openptz/
+          cd package
+          tar -czvf ../openptz-linux-x86_64.tar.gz openptz
+          cd ..
+
+      # 2. Package .deb
+      - name: Build Debian package (.deb)
+        run: |
+          cargo deb --no-build -o openptz-linux-amd64.deb
+
+      # 3. Package AppImage
+      - name: Build AppImage
+        run: |
+          # Download appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          sed -i 's|AI\x02|\x00\x00\x00|' appimagetool || true # allow running on Docker without FUSE
+
+          # Prepare AppDir structure
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps
+          mkdir -p AppDir/usr/share/applications
+
+          cp target/release/openptz AppDir/usr/bin/
+          cp assets/openptz.desktop AppDir/
+          cp assets/openptz.desktop AppDir/usr/share/applications/
+          cp assets/openptz.svg AppDir/
+          cp assets/openptz.svg AppDir/openptz.svg
+          cp assets/openptz.svg AppDir/usr/share/icons/hicolor/scalable/apps/
+
+          # Create AppRun entrypoint
+          cat << 'EOF' > AppDir/AppRun
+          #!/bin/sh
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          export PATH="${HERE}/usr/bin:${PATH}"
+          exec "${HERE}/usr/bin/openptz" ui "$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          # Build the AppImage
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir OpenPTZ-x86_64.AppImage
+
+      # 4. Generate Checksums
+      - name: Generate SHA256 checksums
+        run: |
+          sha256sum openptz-linux-x86_64.tar.gz OpenPTZ-x86_64.AppImage openptz-linux-amd64.deb > SHA256SUMS.txt
+
+      # 5. Create GitHub Release
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OpenPTZ ${{ github.ref_name }}
+          tag_name: ${{ github.ref }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            OpenPTZ-x86_64.AppImage
+            openptz-linux-amd64.deb
+            openptz-linux-x86_64.tar.gz
+            SHA256SUMS.txt
