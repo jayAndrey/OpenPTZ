@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Logitech Rally PTZ Controller</title>
+  <title>OpenPTZ — Controller & Live Preview</title>
   <style>
     :root {
       --bg-base: #0b0f19;
@@ -248,10 +248,74 @@
       color: #fff;
     }
 
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #10b981;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+      animation: pulse 1.5s infinite;
+    }
+
+    .hud-select {
+      background: rgba(11, 15, 25, 0.8);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      font-size: 0.8rem;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      outline: none;
+      cursor: pointer;
+      max-width: 220px;
+      text-overflow: ellipsis;
+    }
+
+    .hud-select:hover {
+      border-color: var(--cyan);
+    }
+
+    .hud-select option {
+      background: #151d30;
+      color: #fff;
+    }
+
+    .aim-marker {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border: 2px solid var(--cyan);
+      border-radius: 50%;
+      transform: translate(-50%, -50%) scale(0.4);
+      pointer-events: none;
+      animation: aimAnim 0.5s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+      z-index: 5;
+    }
+
+    @keyframes aimAnim {
+      0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; border-color: #fff; }
+      100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; border-color: var(--cyan); }
+    }
+
+    video {
+      cursor: crosshair;
+    }
+
     .video-controls {
       pointer-events: auto;
       display: flex;
-      gap: 8px;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
     .crosshair {
@@ -581,6 +645,17 @@
       color: var(--cyan);
     }
 
+    .preset-btn.has-preset {
+      border-color: rgba(6, 182, 212, 0.4);
+      background: rgba(6, 182, 212, 0.08);
+      color: #fff;
+    }
+
+    .preset-btn.has-preset span {
+      color: var(--cyan);
+      font-weight: 500;
+    }
+
     .save-mode-active .preset-btn {
       border-color: var(--red);
       background: rgba(239, 68, 68, 0.08);
@@ -751,8 +826,8 @@
         <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4zM15 16H5V8h10v8z"/>
       </svg>
       <div class="brand-text">
-        <h1>Logitech Rally PTZ Controller</h1>
-        <p id="devicePathLabel">Connecting to camera...</p>
+        <h1>OpenPTZ</h1>
+        <p id="devicePathLabel">Camera Controller & Live Preview</p>
       </div>
     </div>
 
@@ -775,22 +850,38 @@
     <!-- Left Column: Video & PTZ -->
     <div class="left-col">
       <!-- Live Video Card -->
-      <div class="video-card">
+      <div class="video-card" id="videoCard">
         <video id="webcamVideo" autoplay playsinline muted></video>
         <div class="video-placeholder" id="videoPlaceholder">
           <svg viewBox="0 0 24 24">
             <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
           </svg>
-          <p>Live Video Preview</p>
-          <button class="btn btn-primary" id="btnStartVideo">Start Video Stream</button>
+          <p id="placeholderText">Превью камеры Logitech Rally</p>
+          <button class="btn btn-primary" id="btnStartVideo">
+            <span id="startVideoBtnText">Включить превью</span>
+          </button>
         </div>
 
         <div class="video-overlay" id="videoOverlay" style="display: none;">
           <div class="video-top-hud">
-            <div class="hud-badge" id="hudCoords">Pan: 0.0° | Tilt: 0.0° | 1.0x</div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <div class="hud-badge live-badge">
+                <span class="live-dot"></span> LIVE
+              </div>
+              <div class="hud-badge" id="hudCoords">Pan: 0.0° | Tilt: 0.0° | 1.0x</div>
+            </div>
             <div class="video-controls">
-              <button class="btn btn-pill" id="btnToggleCrosshair">Crosshair</button>
-              <button class="btn btn-pill" id="btnFullscreen">Fullscreen</button>
+              <select id="cameraSourceSelect" class="hud-select" title="Выбор камеры">
+                <option value="">Поиск камеры...</option>
+              </select>
+              <select id="resolutionSelect" class="hud-select" title="Разрешение">
+                <option value="1080" selected>1080p</option>
+                <option value="720">720p</option>
+                <option value="2160">4K</option>
+              </select>
+              <button class="btn btn-pill" id="btnSnapshot" title="Сделать снимок">📸 Снимок</button>
+              <button class="btn btn-pill" id="btnToggleCrosshair" title="Прицел">🎯 Прицел</button>
+              <button class="btn btn-pill" id="btnFullscreen" title="На весь экран">⛶</button>
             </div>
           </div>
           <div class="crosshair" id="crosshairOverlay"></div>
@@ -864,16 +955,16 @@
           <button class="btn btn-pill" id="btnToggleSaveMode">Save Mode</button>
         </div>
 
-        <p style="font-size: 0.75rem; color: var(--text-muted); margin: 10px 0 6px;">Hardware EEPROM Presets (1–8):</p>
+        <p style="font-size: 0.75rem; color: var(--text-muted); margin: 10px 0 6px;">Quick Slots (1–8):</p>
         <div class="preset-grid" id="presetGrid">
-          <button class="preset-btn" data-preset="1">1<span>Preset</span></button>
-          <button class="preset-btn" data-preset="2">2<span>Preset</span></button>
-          <button class="preset-btn" data-preset="3">3<span>Preset</span></button>
-          <button class="preset-btn" data-preset="4">4<span>Preset</span></button>
-          <button class="preset-btn" data-preset="5">5<span>Preset</span></button>
-          <button class="preset-btn" data-preset="6">6<span>Preset</span></button>
-          <button class="preset-btn" data-preset="7">7<span>Preset</span></button>
-          <button class="preset-btn" data-preset="8">8<span>Preset</span></button>
+          <button class="preset-btn" data-preset="1">1<span>Empty</span></button>
+          <button class="preset-btn" data-preset="2">2<span>Empty</span></button>
+          <button class="preset-btn" data-preset="3">3<span>Empty</span></button>
+          <button class="preset-btn" data-preset="4">4<span>Empty</span></button>
+          <button class="preset-btn" data-preset="5">5<span>Empty</span></button>
+          <button class="preset-btn" data-preset="6">6<span>Empty</span></button>
+          <button class="preset-btn" data-preset="7">7<span>Empty</span></button>
+          <button class="preset-btn" data-preset="8">8<span>Empty</span></button>
         </div>
 
         <div class="soft-preset-input">
@@ -1151,62 +1242,107 @@
     });
 
     document.querySelectorAll('.preset-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const num = btn.dataset.preset;
         if (isSaveMode) {
-          apiPost(`/api/preset/save/${num}`);
-          showToast(`Preset ${num} saved to camera!`);
+          const res = await apiPost(`/api/preset/save/${num}`);
+          if (res && res.status === 'ok') {
+            showToast(`Preset ${num} saved! (Pan: ${res.pan_deg.toFixed(1)}°, Tilt: ${res.tilt_deg.toFixed(1)}°, Zoom: ${res.zoom_x.toFixed(1)}x)`);
+            loadPresets();
+          }
           saveToggle.click(); // exit save mode
         } else {
-          apiPost(`/api/preset/recall/${num}`);
-          showToast(`Moving to Preset ${num}...`);
+          if (!btn.classList.contains('has-preset')) {
+            showToast(`Preset ${num} is empty. Click 'Save Mode' or Shift+${num} to save current position.`, true);
+            return;
+          }
+          const res = await apiPost(`/api/preset/recall/${num}`);
+          if (res && res.status === 'ok') {
+            showToast(`Moved to Preset ${num}: P:${res.pan_deg.toFixed(1)}° T:${res.tilt_deg.toFixed(1)}° ${res.zoom_x.toFixed(1)}x`);
+          }
         }
       });
     });
 
-    // Software Presets
-    async function loadSoftPresets() {
+    // Preset Manager (Unified slots 1-8 + Named Presets)
+    async function loadPresets() {
       try {
-        const res = await fetch('/api/software-preset/list');
+        const res = await fetch('/api/preset/list');
         const list = await res.json();
+        const slots = {};
+        const namedList = [];
+        
+        list.forEach(p => {
+          if (['1','2','3','4','5','6','7','8'].includes(p.name)) {
+            slots[p.name] = p;
+          } else {
+            namedList.push(p);
+          }
+        });
+
+        // Update slots 1-8 buttons
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+          const num = btn.dataset.preset;
+          const p = slots[num];
+          const span = btn.querySelector('span');
+          if (p) {
+            btn.classList.add('has-preset');
+            btn.title = `Slot ${num}: Pan ${p.pan_deg.toFixed(1)}°, Tilt ${p.tilt_deg.toFixed(1)}°, Zoom ${p.zoom_x.toFixed(1)}x`;
+            if (span) span.textContent = `${p.pan_deg > 0 ? '+' : ''}${p.pan_deg.toFixed(0)}° / ${p.zoom_x.toFixed(1)}x`;
+          } else {
+            btn.classList.remove('has-preset');
+            btn.title = `Slot ${num}: Empty (Click 'Save Mode' or Shift+${num} to save)`;
+            if (span) span.textContent = 'Empty';
+          }
+        });
+
+        // Update named presets list
         const container = document.getElementById('softPresetList');
         container.innerHTML = '';
-        list.forEach(p => {
-          const item = document.createElement('div');
-          item.className = 'soft-preset-item';
-          item.innerHTML = `
-            <div>
-              <strong>${p.name}</strong>
-              <div class="soft-preset-meta">P:${p.pan_deg.toFixed(1)}° T:${p.tilt_deg.toFixed(1)}° Z:${p.zoom_x.toFixed(1)}x</div>
-            </div>
-            <div style="display:flex; gap:6px;">
-              <button class="btn btn-pill" onclick="recallSoft('${p.name}')">Go</button>
-              <button class="btn btn-pill btn-danger" onclick="deleteSoft('${p.name}')">×</button>
-            </div>
-          `;
-          container.appendChild(item);
-        });
+        if (namedList.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:8px;">No custom named presets yet</div>';
+        } else {
+          namedList.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'soft-preset-item';
+            item.innerHTML = `
+              <div>
+                <strong>${p.name}</strong>
+                <div class="soft-preset-meta">P:${p.pan_deg.toFixed(1)}° T:${p.tilt_deg.toFixed(1)}° Z:${p.zoom_x.toFixed(1)}x</div>
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-pill" onclick="recallPreset('${p.name}')">Go</button>
+                <button class="btn btn-pill btn-danger" onclick="deletePreset('${p.name}')">×</button>
+              </div>
+            `;
+            container.appendChild(item);
+          });
+        }
       } catch (e) {}
     }
 
-    async function recallSoft(name) {
-      apiPost(`/api/software-preset/recall?name=${encodeURIComponent(name)}`);
-      showToast(`Recalled '${name}'`);
+    async function recallPreset(name) {
+      const res = await apiPost(`/api/preset/recall?name=${encodeURIComponent(name)}`);
+      if (res && res.status === 'ok') {
+        showToast(`Moved to preset '${name}'`);
+      }
     }
 
-    async function deleteSoft(name) {
-      apiPost(`/api/software-preset/delete?name=${encodeURIComponent(name)}`);
-      showToast(`Deleted '${name}'`);
-      setTimeout(loadSoftPresets, 300);
+    async function deletePreset(name) {
+      await apiPost(`/api/preset/delete?name=${encodeURIComponent(name)}`);
+      showToast(`Deleted preset '${name}'`);
+      loadPresets();
     }
 
-    document.getElementById('btnSaveSoft').addEventListener('click', () => {
+    document.getElementById('btnSaveSoft').addEventListener('click', async () => {
       const name = document.getElementById('softPresetName').value.trim();
       if (!name) return;
-      apiPost(`/api/software-preset/save?name=${encodeURIComponent(name)}`);
-      document.getElementById('softPresetName').value = '';
-      showToast(`Saved software preset '${name}'`);
-      setTimeout(loadSoftPresets, 300);
+      const res = await apiPost(`/api/preset/save?name=${encodeURIComponent(name)}`);
+      if (res && res.status === 'ok') {
+        document.getElementById('softPresetName').value = '';
+        showToast(`Saved preset '${name}'`);
+        loadPresets();
+      }
     });
 
     // Anti-Flicker chips
@@ -1226,31 +1362,198 @@
       apiPost(`/api/contrast?val=${e.target.value}`);
     });
 
-    // Live Video Stream (WebRTC getUserMedia)
+    // Live Video Stream (HTML5 / WebRTC getUserMedia)
     const videoElem = document.getElementById('webcamVideo');
     const startVideoBtn = document.getElementById('btnStartVideo');
     const videoPlaceholder = document.getElementById('videoPlaceholder');
     const videoOverlay = document.getElementById('videoOverlay');
+    const cameraSelect = document.getElementById('cameraSourceSelect');
+    const resolutionSelect = document.getElementById('resolutionSelect');
+    const btnSnapshot = document.getElementById('btnSnapshot');
 
-    startVideoBtn.addEventListener('click', async () => {
+    let currentStream = null;
+    let activeCameraDeviceId = null;
+    let selectedResolution = '1080';
+
+    function getConstraints(preferredDeviceId, resolution) {
+      let idealWidth = 1920;
+      let idealHeight = 1080;
+      if (resolution === '720') {
+        idealWidth = 1280; idealHeight = 720;
+      } else if (resolution === '2160') {
+        idealWidth = 3840; idealHeight = 2160;
+      }
+
+      if (preferredDeviceId) {
+        return {
+          video: {
+            deviceId: { exact: preferredDeviceId },
+            width: { ideal: idealWidth },
+            height: { ideal: idealHeight }
+          }
+        };
+      }
+      return {
+        video: {
+          width: { ideal: idealWidth },
+          height: { ideal: idealHeight }
+        }
+      };
+    }
+
+    async function startCamera(preferredDeviceId = null) {
+      const btnText = document.getElementById('startVideoBtnText');
+      if (btnText) btnText.textContent = 'Подключение...';
+
+      try {
+        if (currentStream) {
+          currentStream.getTracks().forEach(t => t.stop());
+        }
+
+        let stream = null;
+        if (!preferredDeviceId) {
+          // Initial stream request to unlock devices & permissions
+          const initialStream = await navigator.mediaDevices.getUserMedia(getConstraints(null, selectedResolution));
+          
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+          // Look for Logitech Rally
+          const rally = videoDevices.find(d => {
+            const l = (d.label || '').toLowerCase();
+            return l.includes('rally') || (l.includes('logitech') && !l.includes('mic'));
+          });
+
+          if (rally) {
+            const activeTrack = initialStream.getVideoTracks()[0];
+            const activeLabel = activeTrack ? activeTrack.label.toLowerCase() : '';
+            if (!activeLabel.includes('rally')) {
+              initialStream.getTracks().forEach(t => t.stop());
+              stream = await navigator.mediaDevices.getUserMedia(getConstraints(rally.deviceId, selectedResolution));
+              activeCameraDeviceId = rally.deviceId;
+            } else {
+              stream = initialStream;
+              activeCameraDeviceId = rally.deviceId;
+            }
+          } else {
+            stream = initialStream;
+            const track = stream.getVideoTracks()[0];
+            if (track) activeCameraDeviceId = track.getSettings().deviceId;
+          }
+        } else {
+          stream = await navigator.mediaDevices.getUserMedia(getConstraints(preferredDeviceId, selectedResolution));
+          activeCameraDeviceId = preferredDeviceId;
+        }
+
+        currentStream = stream;
+        videoElem.srcObject = stream;
+        await videoElem.play().catch(() => {});
+
+        videoPlaceholder.style.display = 'none';
+        videoOverlay.style.display = 'flex';
+
+        await refreshCameraDevicesList();
+        showToast('Превью камеры активно');
+      } catch (err) {
+        console.warn('Camera preview init error:', err);
+        videoPlaceholder.style.display = 'flex';
+        if (btnText) btnText.textContent = 'Включить превью камеры';
+        showToast('Ошибка камеры: ' + err.message, true);
+      }
+    }
+
+    async function refreshCameraDevicesList() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        // Find Logitech Rally or first camera
-        const rally = videoDevices.find(d => d.label.toLowerCase().includes('rally')) || videoDevices[0];
-        
-        const constraints = {
-          video: rally ? { deviceId: { exact: rally.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } } : true
-        };
+        cameraSelect.innerHTML = '';
 
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        videoElem.srcObject = stream;
-        videoPlaceholder.style.display = 'none';
-        videoOverlay.style.display = 'flex';
-        showToast('Live Camera Stream Connected');
-      } catch (err) {
-        showToast('Camera stream failed: ' + err.message, true);
+        if (videoDevices.length === 0) {
+          cameraSelect.innerHTML = '<option value="">Камера не найдена</option>';
+          return;
+        }
+
+        videoDevices.forEach((dev, idx) => {
+          const opt = document.createElement('option');
+          opt.value = dev.deviceId;
+          const isRally = (dev.label || '').toLowerCase().includes('rally');
+          opt.textContent = `${isRally ? '🎥 ' : '📷 '}${dev.label || `Камера ${idx + 1}`}`;
+          if (dev.deviceId === activeCameraDeviceId || (isRally && !activeCameraDeviceId)) {
+            opt.selected = true;
+          }
+          cameraSelect.appendChild(opt);
+        });
+      } catch (e) {}
+    }
+
+    // Switch camera source from dropdown
+    cameraSelect.addEventListener('change', (e) => {
+      activeCameraDeviceId = e.target.value;
+      startCamera(activeCameraDeviceId);
+    });
+
+    // Switch resolution
+    resolutionSelect.addEventListener('change', (e) => {
+      selectedResolution = e.target.value;
+      startCamera(activeCameraDeviceId);
+    });
+
+    // Snapshot feature
+    btnSnapshot.addEventListener('click', () => {
+      if (!videoElem.videoWidth) {
+        showToast('Видеопоток не готов', true);
+        return;
       }
+      const canvas = document.createElement('canvas');
+      canvas.width = videoElem.videoWidth;
+      canvas.height = videoElem.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(videoElem, 0, 0, canvas.width, canvas.height);
+
+      const link = document.createElement('a');
+      link.download = `rally-snapshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jpg`;
+      link.href = canvas.toDataURL('image/jpeg', 0.95);
+      link.click();
+      showToast(`Снимок сохранён (${canvas.width}x${canvas.height})`);
+    });
+
+    // Click-to-Aim / Click-to-Center on live video
+    function createAimMarker(x, y) {
+      const card = document.getElementById('videoCard');
+      const marker = document.createElement('div');
+      marker.className = 'aim-marker';
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+      card.appendChild(marker);
+      setTimeout(() => marker.remove(), 600);
+    }
+
+    videoElem.addEventListener('click', (e) => {
+      const rect = videoElem.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      createAimMarker(clickX, clickY);
+
+      // Relative offset from center: -1.0 (left/top) to +1.0 (right/bottom)
+      const normX = (clickX / rect.width - 0.5) * 2;
+      const normY = (clickY / rect.height - 0.5) * 2;
+
+      const zoom = currentZoom || 1.0;
+      const fovFactor = 1.0 / Math.max(1.0, zoom * 0.7);
+      const deltaPan = normX * (20.0 * fovFactor);
+      const deltaTilt = -normY * (14.0 * fovFactor);
+
+      if (Math.abs(deltaPan) >= 0.5) {
+        apiPost(`/api/pan?deg=${(currentPan + deltaPan).toFixed(1)}`);
+      }
+      if (Math.abs(deltaTilt) >= 0.5) {
+        apiPost(`/api/tilt?deg=${(currentTilt + deltaTilt).toFixed(1)}`);
+      }
+    });
+
+    startVideoBtn.addEventListener('click', () => {
+      startCamera();
     });
 
     // Crosshair & Fullscreen
@@ -1259,7 +1562,7 @@
       ch.style.display = ch.style.display === 'none' ? 'flex' : 'none';
     });
     document.getElementById('btnFullscreen').addEventListener('click', () => {
-      const card = document.querySelector('.video-card');
+      const card = document.getElementById('videoCard');
       if (!document.fullscreenElement) card.requestFullscreen();
       else document.exitFullscreen();
     });
@@ -1283,11 +1586,18 @@
         default:
           if (e.key >= '1' && e.key <= '8') {
             if (e.shiftKey) {
-              apiPost(`/api/preset/save/${e.key}`);
-              showToast(`Preset ${e.key} saved!`);
+              apiPost(`/api/preset/save/${e.key}`).then(res => {
+                if (res && res.status === 'ok') {
+                  showToast(`Preset ${e.key} saved!`);
+                  loadPresets();
+                }
+              });
             } else {
-              apiPost(`/api/preset/recall/${e.key}`);
-              showToast(`Moving to Preset ${e.key}...`);
+              apiPost(`/api/preset/recall/${e.key}`).then(res => {
+                if (res && res.status === 'ok') {
+                  showToast(`Moved to Preset ${e.key}`);
+                }
+              });
             }
           }
       }
@@ -1295,7 +1605,8 @@
 
     // Init
     refreshStatus();
-    loadSoftPresets();
+    loadPresets();
+    startCamera(); // Auto-start camera preview immediately on load
     setInterval(refreshStatus, 2000);
   </script>
 </body>

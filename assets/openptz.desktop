@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OpenPTZ
+Comment=Modern Cross-Platform PTZ Camera Controller with Live Video
+Exec=openptz ui
+Icon=openptz
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+Keywords=PTZ;Camera;OpenPTZ;Logitech;Rally;Video;StreamDeck;
+StartupNotify=true

@@ -44,10 +44,11 @@ pub const XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL: u8 = 0x02;
 pub const LOGI_XU_VIDEOPIPE_UNIT_ID: u8 = 10;
 pub const XU_VIDEO_FW_ZOOM_CONTROL: u8 = 0x06;
 
-// Mode control commands for XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL
+// Mode control commands for XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL (Selector 2 is PANTILT_RESET)
+// 1 = Reset Pan, 2 = Reset Tilt, 3 = Reset Both (Home)
+pub const LOGI_XU_CMD_RESET_PAN: u8 = 1;
+pub const LOGI_XU_CMD_RESET_TILT: u8 = 2;
 pub const LOGI_XU_CMD_HOME: u8 = 3;
-pub const LOGI_XU_CMD_SAVE_PRESET_BASE: u8 = 4;   // Preset 1 = 4, Preset 8 = 11
-pub const LOGI_XU_CMD_GOTO_PRESET_BASE: u8 = 12;  // Preset 1 = 12, Preset 8 = 19
 
 // Power Line Frequency (Anti-flicker) settings
 pub const FLICKER_DISABLED: i32 = 0;

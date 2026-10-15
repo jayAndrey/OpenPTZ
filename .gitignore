@@ -1,1 +1,9 @@
 /target
+**/*.rs.bk
+*.log
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+presets.json

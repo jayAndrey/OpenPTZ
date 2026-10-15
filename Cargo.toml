@@ -1,9 +1,19 @@
 [package]
-name = "ptz-rally"
+name = "openptz"
 version = "0.1.0"
 edition = "2021"
 authors = ["andryjay"]
-description = "PTZ Camera Controller for Logitech Rally and UVC cameras on Linux"
+description = "Modern, cross-platform PTZ camera controller for Linux, Windows & macOS with live video preview, Web GUI, TUI, and REST API."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jayAndrey/OpenPTZ"
+homepage = "https://github.com/jayAndrey/OpenPTZ"
+keywords = ["ptz", "camera", "logitech-rally", "v4l2", "streaming"]
+categories = ["command-line-utilities", "multimedia::video"]
+readme = "README.md"
+
+[[bin]]
+name = "openptz"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

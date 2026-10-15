@@ -95,6 +95,17 @@ impl ApiServer {
             };
         }
 
+        // List presets
+        if method == "GET" && (path == "/api/preset/list" || path == "/api/software-preset/list") {
+            if let Ok(mgr) = pm.lock() {
+                let list = mgr.list();
+                return match serde_json::to_string_pretty(&list) {
+                    Ok(s) => (200, "application/json", s),
+                    Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                };
+            }
+        }
+
         if method == "POST" || method == "GET" {
             match path {
                 "/api/home" => {
@@ -197,37 +208,38 @@ impl ApiServer {
                 _ => {}
             }
 
-            // Hardware Presets pattern: /api/preset/recall/N or /api/preset/save/N
-            if let Some(num_str) = path.strip_prefix("/api/preset/recall/") {
-                if let Ok(num) = num_str.parse::<u8>() {
-                    return match camera.goto_hardware_preset(num) {
-                        Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","preset_recalled":{}}}"#, num)),
-                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
-                    };
-                }
-            }
-
+            // Presets by slot: /api/preset/save/<slot>
             if let Some(num_str) = path.strip_prefix("/api/preset/save/") {
                 if let Ok(num) = num_str.parse::<u8>() {
-                    return match camera.save_hardware_preset(num) {
-                        Ok(()) => (200, "application/json", format!(r#"{{"status":"ok","preset_saved":{}}}"#, num)),
-                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
-                    };
+                    if let Ok(mut mgr) = pm.lock() {
+                        return match mgr.save_slot(num, &camera) {
+                            Ok(p) => (200, "application/json", format!(
+                                r#"{{"status":"ok","preset":{},"pan_deg":{},"tilt_deg":{},"zoom_x":{}}}"#,
+                                num, p.pan_deg, p.tilt_deg, p.zoom_x
+                            )),
+                            Err(e) => (500, "application/json", format!(r#"{{"error":"Failed to save preset: {}"}}"#, e)),
+                        };
+                    }
                 }
             }
 
-            // Software Presets
-            if path == "/api/software-preset/list" {
-                if let Ok(mgr) = pm.lock() {
-                    let list = mgr.list();
-                    return match serde_json::to_string_pretty(&list) {
-                        Ok(s) => (200, "application/json", s),
-                        Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
-                    };
+            // Presets by slot: /api/preset/recall/<slot>
+            if let Some(num_str) = path.strip_prefix("/api/preset/recall/") {
+                if let Ok(num) = num_str.parse::<u8>() {
+                    if let Ok(mgr) = pm.lock() {
+                        return match mgr.recall_slot(num, &camera) {
+                            Ok(p) => (200, "application/json", format!(
+                                r#"{{"status":"ok","preset":{},"pan_deg":{},"tilt_deg":{},"zoom_x":{}}}"#,
+                                num, p.pan_deg, p.tilt_deg, p.zoom_x
+                            )),
+                            Err(e) => (404, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                        };
+                    }
                 }
             }
 
-            if path == "/api/software-preset/save" {
+            // Named Presets: save
+            if path == "/api/preset/save" || path == "/api/software-preset/save" {
                 if let Some(name) = params.get("name") {
                     let pan = camera.get_pan_deg().unwrap_or(0.0);
                     let tilt = camera.get_tilt_deg().unwrap_or(0.0);
@@ -236,25 +248,34 @@ impl ApiServer {
                     let f = camera.get_power_line_frequency().ok();
 
                     if let Ok(mut mgr) = pm.lock() {
-                        let _ = mgr.set_preset(name, pan, tilt, zoom, b, f);
-                        return (200, "application/json", format!(r#"{{"status":"ok","saved":"{}"}}"#, name));
+                        return match mgr.set_preset(name, pan, tilt, zoom, b, f) {
+                            Ok(p) => (200, "application/json", format!(
+                                r#"{{"status":"ok","saved":"{}","pan_deg":{},"tilt_deg":{},"zoom_x":{}}}"#,
+                                name, p.pan_deg, p.tilt_deg, p.zoom_x
+                            )),
+                            Err(e) => (500, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                        };
                     }
                 }
             }
 
-            if path == "/api/software-preset/recall" {
+            // Named Presets: recall
+            if path == "/api/preset/recall" || path == "/api/software-preset/recall" {
                 if let Some(name) = params.get("name") {
                     if let Ok(mgr) = pm.lock() {
-                        if let Some(p) = mgr.get_preset(name) {
-                            let _ = camera.move_pan_tilt(p.pan_deg, p.tilt_deg);
-                            let _ = camera.set_zoom_x(p.zoom_x);
-                            return (200, "application/json", format!(r#"{{"status":"ok","recalled":"{}"}}"#, name));
-                        }
+                        return match mgr.apply(&camera, name) {
+                            Ok(p) => (200, "application/json", format!(
+                                r#"{{"status":"ok","recalled":"{}","pan_deg":{},"tilt_deg":{},"zoom_x":{}}}"#,
+                                name, p.pan_deg, p.tilt_deg, p.zoom_x
+                            )),
+                            Err(e) => (404, "application/json", format!(r#"{{"error":"{}"}}"#, e)),
+                        };
                     }
                 }
             }
 
-            if path == "/api/software-preset/delete" {
+            // Named Presets: delete
+            if path == "/api/preset/delete" || path == "/api/software-preset/delete" {
                 if let Some(name) = params.get("name") {
                     if let Ok(mut mgr) = pm.lock() {
                         let _ = mgr.delete_preset(name);

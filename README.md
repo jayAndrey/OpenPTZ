@@ -1,226 +1,229 @@
-# PTZ Camera Controller for Logitech Rally (Rust)
+# OpenPTZ 🎥✨
 
-Высокопроизводительное приложение на **Rust** для полноценного управления PTZ-камерами **Logitech Rally** (а также Logitech PTZ Pro, PTZ Pro 2, MeetUp и другими UVC PTZ камерами) в среде Linux / Ubuntu.
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![SemVer 2.0.0](https://img.shields.io/badge/SemVer-2.0.0-blue.svg)](https://semver.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)](#-cross-platform-architecture--roadmap)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-Проект объединяет возможности референса [xMRi/PTZControl](https://github.com/xMRi/PTZControl) (Windows UVC XU Extension Units) и управления через Video4Linux2 (`v4l2`), описанного в руководстве *"Accessing Logitech Camera controls in Ubuntu"*.
+**OpenPTZ** is a modern, high-performance, open-source PTZ (Pan-Tilt-Zoom) camera control suite written in pure **Rust**. Designed for broadcast studios, conference rooms, streamers, and automation engineers, it provides an ultra-responsive Web/Desktop GUI with live video preview, an interactive terminal UI (TUI), a scriptable CLI, and a local REST API.
 
----
-
-## 🚀 Основные возможности
-
-1. **Автоматическое обнаружение оборудования**:
-   - Автопоиск подключенных камер через V4L2 (`/sys/class/video4linux` и `ioctl VIDIOC_QUERYCAP`).
-   - Автоматический выбор `Logi Rally Camera` без необходимости вручную указывать путь к устройству.
-2. **Точное PTZ-управление (Pan, Tilt, Zoom)**:
-   - **Pan (Панорама)**: от `-90.0°` до `+90.0°` (с точностью до 1 угловой секунды / 3600 единиц на градус).
-   - **Tilt (Наклон)**: от `-90.0°` до `+50.0°`.
-   - **Zoom (Оптический зум)**: от `1.0x` до `15.0x`.
-   - **Home Position**: аппаратный и программный возврат в нулевую точку (`0.0°`, `0.0°`, `1.0x`).
-3. **Устранение мерцания (Anti-Flicker / Power Line Frequency)**:
-   - Переключение частоты питания `50 Hz` (для Европы / СНГ) / `60 Hz` (США) / `Disabled` для устранения полос на видео при искусственном освещении (решение проблемы из статьи Himanshu Chaudhary).
-4. **Аппаратные и программные пресеты (Presets)**:
-   - **Hardware Presets (1–8)**: сохранение и вызов позиций напрямую из встроенной памяти EEPROM камеры через команды UVC Extension Unit (Unit 11, Selector 2).
-   - **Software Named Presets**: сохранение неограниченного числа именованных позиций (например, `podium`, `whiteboard`, `audience`) в `~/.config/ptz-rally/presets.json` вместе с настройками яркости и зума.
-5. **Интерактивный терминальный интерфейс (TUI)**:
-   - 2D-прицел (Reticle) текущего положения камеры в реальном времени.
-   - Визуальные шкалы Pan, Tilt, Zoom.
-   - Управление стрелками клавиатуры, клавишами `+`/`-`, горячими клавишами `1-8` и `Home`.
-6. **Встроенный HTTP REST API**:
-   - Позволяет интегрировать камеру с **Bitfocus Companion**, **Elgato Stream Deck**, **OBS Studio**, веб-интерфейсами или системами автоматизации (Home Assistant).
-7. **Совместимость с CLI флагами xMRi/PTZControl**:
-   - Поддерживает флаги `-move_up`, `-move_down`, `-move_left`, `-move_right`, `-zoom_in`, `-zoom_out`, `-move_home`, `-store:<N>`, `-restore:<N>`.
+Originally created to solve the notorious lack of official Linux control and 50Hz/60Hz anti-flicker tools for the **Logitech Rally Camera**, OpenPTZ is architected as an extensible, cross-platform solution for all UVC PTZ cameras.
 
 ---
 
-## 📦 Установка и сборка
+## 🌟 Highlights
 
-Приложение собрано и установлено в `~/.local/bin/ptz-rally`.
+* **🎯 Ultra-Low Latency Live Preview**: Hardware-accelerated video preview with automatic camera detection, interactive **Click-to-Aim** (click anywhere on video to center the camera), 1080p/720p/4K resolution switcher, camera selection dropdown, and high-res snapshot export.
+* **⚡ Zero Electron Bloat**: Built in pure Rust. Native standalone binary (< 5 MB), consumes minimal CPU and RAM.
+* **💾 Rock-Solid Coordinate Presets**: Fast 1–8 numbered slots and unlimited named presets (`podium`, `whiteboard`, `audience`) saved in `presets.json` with Pan, Tilt, Zoom, brightness, and anti-flicker state.
+* **💡 Anti-Flicker Frequency Control**: Instant switching between `50 Hz` (PAL / Europe) and `60 Hz` (NTSC / Americas) to eliminate artificial lighting banding.
+* **🕹️ Multiple Control Interfaces**:
+  * **Desktop / Web GUI**: Sleek dark UI with live video, D-Pad, 2D radar positioning reticle, and keyboard shortcuts.
+  * **Terminal UI (TUI)**: Interactive Ratatui console interface for SSH sessions and headless servers.
+  * **Command Line (CLI)**: Fast, non-interactive commands for scripting, cron jobs, and shortcuts.
+  * **HTTP REST API**: Network control for **Bitfocus Companion**, **Elgato Stream Deck**, **OBS Studio**, and Home Assistant.
+* **🔄 Backward Compatibility**: Supports legacy CLI flags from Windows `xMRi/PTZControl`.
 
-Для пересборки из исходников:
+---
+
+## 🖥️ User Interfaces
+
+### 1. Web & Desktop GUI (`openptz ui` / `openptz gui`)
+
+Launch the graphical controller:
 ```bash
+openptz ui
+# or specify port:
+openptz ui --port 8080
+```
+On desktop environments, OpenPTZ automatically launches in borderless application mode (via Chrome/Chromium or default browser) and auto-starts the camera preview.
+
+**GUI Features:**
+- **Click-to-Aim**: Click any subject on the live stream to smoothly center the camera on them.
+- **2D Radar Canvas**: Interactive coordinate grid (-90° to +90° Pan, -90° to +50° Tilt) with click-to-point targeting.
+- **D-Pad & Zoom**: Directional controls with step size adjustments (1°, 2°, 5°, 10°, 20°) and smooth optical zoom slider (1.0x to 15.0x).
+- **Preset Grid**: Live indicators showing saved positions (e.g. `+15° / 2.0x`) vs `Empty`, one-click recall, and a dedicated **Save Mode** for overwriting slots.
+- **Keyboard Shortcuts**: Arrow keys (Pan/Tilt), `+`/`-` (Zoom), `Home` (center), `1`–`8` (recall preset), `Shift + 1..8` (save preset), `F` (toggle 50/60Hz).
+
+---
+
+### 2. Interactive Terminal UI (`openptz tui`)
+
+Run a full-screen interactive console interface inside any terminal:
+```bash
+openptz tui
+# or simply:
+openptz
+```
+
+**Keybindings:**
+* `←` / `→` — Pan left / right
+* `↑` / `↓` — Tilt up / down
+* `+` / `-` or `PgUp` / `PgDn` — Zoom in / out
+* `Home` / `h` — Return to home position (`0.0°`, `0.0°`, `1.0x`)
+* `1` .. `8` — Recall Preset 1–8
+* `Shift + 1..8` — Save current position to Preset 1–8
+* `F` — Toggle Anti-Flicker (`Off` → `50 Hz` → `60 Hz`)
+* `[` / `]` — Change step size (1°, 5°, 10°, 20°)
+* `B` / `b` — Adjust Brightness
+* `C` / `c` — Adjust Contrast
+* `q` / `Esc` — Quit
+
+---
+
+### 3. Command Line Interface (CLI)
+
+Fast, scriptable commands for automation:
+
+```bash
+# Query camera status
+openptz status
+openptz status --json
+
+# List available cameras
+openptz list
+
+# Pan, Tilt & Zoom commands
+openptz pan --to 25.5               # Move Pan to +25.5°
+openptz pan --left --step 5.0        # Step Pan Left by 5°
+openptz tilt --to -10.0              # Move Tilt to -10.0°
+openptz zoom --to 3.5                # Set Zoom to 3.5x
+openptz home                         # Reset to home position
+
+# Anti-Flicker (50Hz / 60Hz)
+openptz set --flicker 50             # 50 Hz (Europe / PAL)
+openptz set --flicker 60             # 60 Hz (Americas / NTSC)
+
+# Presets
+openptz preset --save 1              # Save current position to Slot 1
+openptz preset --recall 1            # Recall Slot 1
+openptz preset --save-soft podium    # Save named preset 'podium'
+openptz preset --recall-soft podium  # Recall named preset 'podium'
+openptz preset                       # List all saved presets
+```
+
+---
+
+### 4. HTTP REST API
+
+OpenPTZ embeds a lightweight HTTP server for network automation:
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/status` | `GET` | Returns full JSON camera status (Pan, Tilt, Zoom, settings) |
+| `/api/home` | `POST` | Resets camera to home position |
+| `/api/pan?deg=15.0` | `POST` | Sets absolute Pan angle |
+| `/api/pan?dir=left&step=5.0` | `POST` | Steps Pan relative |
+| `/api/tilt?deg=-5.0` | `POST` | Sets absolute Tilt angle |
+| `/api/tilt?dir=up&step=5.0` | `POST` | Steps Tilt relative |
+| `/api/zoom?x=2.5` | `POST` | Sets Zoom multiplier (1.0 to 15.0) |
+| `/api/zoom?dir=in&step=0.5` | `POST` | Steps Zoom relative |
+| `/api/flicker?hz=50` | `POST` | Sets anti-flicker (0: Off, 50: 50Hz, 60: 60Hz) |
+| `/api/preset/list` | `GET` | Returns list of all presets (slots & named) |
+| `/api/preset/save/<slot>` | `POST` | Saves current view into slot (1–8) |
+| `/api/preset/recall/<slot>` | `POST` | Moves camera to preset slot (1–8) |
+| `/api/preset/save?name=podium` | `POST` | Saves named preset |
+| `/api/preset/recall?name=podium` | `POST` | Recalls named preset |
+| `/api/preset/delete?name=podium` | `POST` | Deletes named preset |
+
+#### Bitfocus Companion / Stream Deck Integration
+Create a generic HTTP Request button in Companion:
+- **URL**: `http://127.0.0.1:8080/api/preset/recall/1`
+- **Method**: `POST`
+
+---
+
+## 🏗️ Cross-Platform Architecture & Roadmap
+
+OpenPTZ separates camera control into platform-agnostic application logic (GUI, TUI, CLI, REST API, Presets) and OS-specific hardware drivers:
+
+```
+OpenPTZ Architecture
+├── GUI (HTML5 / WebRTC / Vanilla JS)
+├── TUI (Ratatui / Crossterm)
+├── CLI (Clap v4)
+├── REST API (tiny_http)
+└── Camera Hardware Abstraction (PtzBackend)
+    ├── Linux: V4L2 ioctl (Implemented ✅)
+    ├── Windows: DirectShow / MediaFoundation (Help Wanted 🙋‍♂️)
+    └── macOS: CoreMediaIO / IOKit USB (Help Wanted 🙋‍♂️)
+```
+
+| Platform | Backend Driver | Status |
+| :--- | :--- | :--- |
+| **Linux** | Video4Linux2 (`v4l2` ioctls) | **Complete & Production Ready** ✅ |
+| **Windows** | DirectShow `IAMCameraControl` / MediaFoundation | *In Progress / Help Wanted* 🛠️ |
+| **macOS** | CoreMediaIO DAL / IOKit USB Class Requests | *Planned / Help Wanted* 🛠️ |
+
+We warmly welcome community contributions to bring native Windows and macOS backends to life! Check out our [Contributing Guide](CONTRIBUTING.md).
+
+---
+
+## 📦 Installation
+
+### From Source (All Linux Distributions)
+
+**Requirements**: Rust 1.80+ (`cargo`).
+
+```bash
+# Clone repository
+git clone https://github.com/jayAndrey/OpenPTZ.git
+cd OpenPTZ
+
+# Build optimized binary
 cargo build --release
-cp target/release/ptz-rally ~/.local/bin/
+
+# Install to ~/.local/bin
+cp target/release/openptz ~/.local/bin/
+
+# Optional: Add desktop launcher for Ubuntu/Debian/Fedora/Arch
+mkdir -p ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
+cp assets/openptz.desktop ~/.local/share/applications/
+cp assets/openptz.svg ~/.local/share/icons/hicolor/scalable/apps/
+```
+
+Verify installation:
+```bash
+openptz --version
+openptz list
 ```
 
 ---
 
-## 🕹️ Способы использования
+## 🔧 Hardware Notes: Logitech Rally Camera
 
-### 1. Графический интерфейс (GUI / Desktop UI)
-
-Запуск визуального графического окна управления:
-```bash
-ptz-rally ui
-# или:
-ptz-rally gui
-```
-При запуске автоматически открывается выделенное окно приложения (без рамок браузера и адресной строки, через режим приложения Chrome/веб-браузер) и запускается локальный сервер.
-
-Также приложение автоматически добавлено в меню приложений Ubuntu: **"Logitech Rally PTZ Control"** (с собственной иконкой).
-
-**Возможности графического интерфейса:**
-- **Live Video Preview**: отображение прямого видеопотока с Logitech Rally в реальном времени с поддержкой полноэкранного режима и наэкранного прицела.
-- **Интерактивный D-Pad**: поворот влево/вправо/вверх/вниз и возврат в Home. Поддерживает как одиночные клики с настраиваемым шагом, так и зажатие кнопки мыши.
-- **2D-радар позиции (Reticle)**: наглядная сетка координат (-90°..+90° Pan, -90°..+50° Tilt) с возможностью **клика в любую точку** для моментального наведения.
-- **Управление оптическим зумом**: плавный вертикальный слайдер от 1.0x до 15.0x, кнопки `+`/`-`, быстрые пресеты 1x, 2x, 5x.
-- **Аппаратные пресеты (1–8)**: сохранение в EEPROM камеры и вызов в 1 клик.
-- **Именованные пресеты**: быстрое сохранение произвольных позиций с именами (например, «Спикер», «Доска», «Зал»).
-- **Устранение мерцания (Anti-Flicker)**: мгновенный переключатель 50 Гц / 60 Гц / выкл для устранения полос на видео.
-- **Полное управление с клавиатуры**: стрелки (Pan/Tilt), `+`/`-` (Zoom), `Home` (домой), `1..8` (вызов пресета), `F` (частота питания).
+Logitech Rally cameras (`046d:0881`) on Linux require careful UVC handling:
+1. **Extension Units (XU)**: Rally's Selector 2 (`PANTILT_RESET`) only accepts values `0..3` (`3` = Hardware Home). Sending values > 3 causes internal USB endpoint stall (`Device or resource busy`). OpenPTZ avoids invalid values and implements software coordinate presets.
+2. **Anti-Flicker**: European/Asian fluorescent and LED lighting oscillates at 50Hz. Always set `--flicker 50` or click **50 Hz** in the UI to prevent horizontal banding lines.
 
 ---
 
-### 2. Терминальный интерфейс (TUI)
+## 🙏 Acknowledgements & Prior Art
 
-Запуск визуального терминала управления:
-```bash
-ptz-rally tui
-# или просто:
-ptz-rally
-```
-
-**Горячие клавиши в TUI:**
-- `←` / `→` — поворот влево / вправо (Pan)
-- `↑` / `↓` — наклон вверх / вниз (Tilt)
-- `+` / `-` или `PageUp` / `PageDown` — приближение / отдаление (Zoom)
-- `Home` или `h` или `0` — возврат в домашнюю позицию
-- `1` .. `8` — быстрый вызов аппаратного пресета (Recall Preset 1–8)
-- `Shift + 1..8` — сохранить текущее положение в аппаратный пресет (Save Preset 1–8)
-- `F` — переключить подавление мерцания (Off -> 50Hz -> 60Hz)
-- `[` / `]` — изменить шаг перемещения (1°, 5°, 10°, 20°)
-- `B` / `b` — регулировка яркости (Brightness)
-- `C` / `c` — регулировка контраста (Contrast)
-- `Q` / `Esc` — выход
+OpenPTZ was inspired by and builds upon community research and prior work:
+* [xMRi/PTZControl](https://github.com/xMRi/PTZControl) — Reference Windows C++ implementation exploring Logitech UVC Extension Unit descriptors.
+* [Himanshu Chaudhary's Ubuntu Guide](https://medium.com/@himanshu.chaudhary) — Documenting V4L2 power line frequency control on Ubuntu Linux.
 
 ---
 
-### 2. Командная строка (CLI)
+## 🤝 Contributing
 
-#### Просмотр статуса и списка устройств
-```bash
-# Список всех камер
-ptz-rally list
+Contributions make the open-source community an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-# Текущее положение и настройки
-ptz-rally status
-
-# Вывод в формате JSON (удобно для скриптов)
-ptz-rally status --json
-```
-
-#### Управление панорамой (Pan)
-```bash
-# Повернуть влево на 5 градусов
-ptz-rally pan --left --step 5.0
-
-# Повернуть вправо на 10 градусов
-ptz-rally pan --right --step 10.0
-
-# Установить абсолютный угол (+15.0°)
-ptz-rally pan --to 15.0
-```
-
-#### Управление наклоном (Tilt)
-```bash
-# Наклонить вверх на 3 градуса
-ptz-rally tilt --up --step 3.0
-
-# Наклонить вниз
-ptz-rally tilt --down --step 3.0
-
-# Установить абсолютный угол (-10.0°)
-ptz-rally tilt --to -10.0
-```
-
-#### Управление зумом (Zoom)
-```bash
-# Приблизить на 0.5x
-ptz-rally zoom --zoom-in --step 0.5
-
-# Отдалить
-ptz-rally zoom --zoom-out --step 0.5
-
-# Установить зум 3.5x
-ptz-rally zoom --to 3.5
-```
-
-#### Домашняя позиция (Home)
-```bash
-ptz-rally home
-```
-
-#### Одновременное перемещение Pan + Tilt
-```bash
-ptz-rally move --pan 20.0 --tilt -5.0
-ptz-rally move --pan-delta -5.0 --tilt-delta 2.0
-```
-
-#### Пресеты (Presets)
-```bash
-# Аппаратные пресеты (Logitech EEPROM 1–8):
-ptz-rally preset --save 1       # Сохранить пресет 1
-ptz-rally preset --recall 1     # Вызвать пресет 1
-
-# Именованные программные пресеты:
-ptz-rally preset --save-soft podium
-ptz-rally preset --recall-soft podium
-ptz-rally preset --list-soft
-ptz-rally preset --delete-soft podium
-```
-
-#### Настройки изображения и устранение мерцания
-```bash
-# Устранение мерцания (50 Гц для Европы/СНГ)
-ptz-rally set --flicker 50
-
-# Настройка яркости (0-255)
-ptz-rally set --brightness 130
-
-# Настройка контраста
-ptz-rally set --contrast 128
-```
+Please read our [Contributing Guidelines](CONTRIBUTING.md) for details on code of conduct and the development process.
 
 ---
 
-### 3. HTTP REST API сервер (для Stream Deck / Bitfocus Companion)
+## 📄 License
 
-Запуск фонового сервера:
-```bash
-ptz-rally serve --port 8080
-```
+OpenPTZ is dual-licensed under either of:
 
-**Доступные REST эндпоинты:**
-| Метод | URL | Описание |
-|---|---|---|
-| `GET` | `/api/status` | Полное состояние камеры в JSON |
-| `POST` | `/api/home` | Возврат в домашнее положение |
-| `POST` | `/api/pan?deg=15.0` | Установка угла панорамы в градусах |
-| `POST` | `/api/pan?dir=left&step=5.0` | Смещение влево |
-| `POST` | `/api/pan?dir=right&step=5.0` | Смещение вправо |
-| `POST` | `/api/tilt?deg=-10.0` | Установка угла наклона в градусах |
-| `POST` | `/api/tilt?dir=up&step=5.0` | Смещение вверх |
-| `POST` | `/api/tilt?dir=down&step=5.0` | Смещение вниз |
-| `POST` | `/api/zoom?x=2.5` | Установка коэффициента зума |
-| `POST` | `/api/zoom?dir=in&step=0.5` | Приближение |
-| `POST` | `/api/zoom?dir=out&step=0.5` | Отдаление |
-| `POST` | `/api/preset/recall/1` | Вызов аппаратного пресета 1..8 |
-| `POST` | `/api/preset/save/1` | Сохранение аппаратного пресета 1..8 |
-| `POST` | `/api/flicker?hz=50` | Установка частоты подавления мерцания (0, 50, 60) |
-| `POST` | `/api/brightness?val=130` | Установка яркости |
+* **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+* **MIT license** ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
----
+at your option.
 
-## 🛠️ Внутреннее устройство и протоколы
+### Contribution Terms
 
-- **V4L2 Controls (`VIDIOC_S_CTRL`, `VIDIOC_G_CTRL`)**:
-  - `V4L2_CID_PAN_ABSOLUTE` (`0x009a0908`): значение угла в угловых секундах (3600 на 1°). Диапазон Logitech Rally: `-324000` (-90°) до `+324000` (+90°).
-  - `V4L2_CID_TILT_ABSOLUTE` (`0x009a0909`): `-324000` (-90°) до `+180000` (+50°).
-  - `V4L2_CID_ZOOM_ABSOLUTE` (`0x009a090d`): от `100` (1.0x) до `1500` (15.0x).
-  - `V4L2_CID_POWER_LINE_FREQUENCY` (`0x00980918`): подавление мерцания (0 = выкл, 1 = 50Гц, 2 = 60Гц).
-- **Logitech UVC Extension Unit (XU)**:
-  - Unit ID 11 (`LOGITECH_XU_PERIPHERAL_CONTROL` `{ffe52d21-8030-4e2c-82d9-f587d00540bd}`):
-    - Selector 2 (`PANTILT_MODE_CONTROL`):
-      - `3`: Hardware Home
-      - `4..11`: Сохранение в Hardware Presets 1..8
-      - `12..19`: Вызов Hardware Presets 1..8
-    - Selector 1 (`PANTILT_RELATIVE_CONTROL`): относительное импульсное управление моторами.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

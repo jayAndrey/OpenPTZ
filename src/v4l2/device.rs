@@ -107,7 +107,8 @@ impl CameraDevice {
                             .to_string();
 
                         let is_rally = card.to_lowercase().contains("rally");
-                        let supports_ptz = dev.get_ctrl(V4L2_CID_PAN_ABSOLUTE).is_ok()
+                        let supports_ptz = is_rally
+                            || dev.get_ctrl(V4L2_CID_PAN_ABSOLUTE).is_ok()
                             || dev.get_ctrl(V4L2_CID_ZOOM_ABSOLUTE).is_ok();
 
                         devices.push(DeviceInfo {
@@ -178,8 +179,8 @@ impl CameraDevice {
             bail!("No V4L2 video devices found on system.");
         }
 
-        // 1. Look for Rally
-        if let Some(rally) = devs.iter().find(|d| d.is_rally && d.supports_ptz) {
+        // 1. Look for Logitech Rally first
+        if let Some(rally) = devs.iter().find(|d| d.is_rally) {
             return Self::open(&rally.path);
         }
 
@@ -437,54 +438,6 @@ impl CameraDevice {
         let _ = self.set_ctrl(V4L2_CID_PAN_ABSOLUTE, 0);
         let _ = self.set_ctrl(V4L2_CID_TILT_ABSOLUTE, 0);
         let _ = self.set_ctrl(V4L2_CID_ZOOM_ABSOLUTE, RALLY_ZOOM_MIN);
-
-        Ok(())
-    }
-
-    /// Save camera position into Logitech Hardware Preset (1 to 8)
-    pub fn save_hardware_preset(&self, preset: u8) -> Result<()> {
-        if !(1..=8).contains(&preset) {
-            bail!("Hardware presets must be between 1 and 8 (got {})", preset);
-        }
-
-        let cmd = LOGI_XU_CMD_SAVE_PRESET_BASE + (preset - 1);
-        let mut val: u8 = cmd;
-        let mut query = UvcXuControlQuery {
-            unit: LOGI_XU_PERIPHERAL_UNIT_ID,
-            selector: XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL,
-            query: UVC_SET_CUR,
-            size: 1,
-            data: &mut val as *mut u8,
-        };
-
-        unsafe {
-            ioctl_call(self.raw_fd(), UVCIOC_CTRL_QUERY, &mut query)
-                .context("Failed to save hardware preset via UVC XU")?;
-        }
-
-        Ok(())
-    }
-
-    /// Recall camera position from Logitech Hardware Preset (1 to 8)
-    pub fn goto_hardware_preset(&self, preset: u8) -> Result<()> {
-        if !(1..=8).contains(&preset) {
-            bail!("Hardware presets must be between 1 and 8 (got {})", preset);
-        }
-
-        let cmd = LOGI_XU_CMD_GOTO_PRESET_BASE + (preset - 1);
-        let mut val: u8 = cmd;
-        let mut query = UvcXuControlQuery {
-            unit: LOGI_XU_PERIPHERAL_UNIT_ID,
-            selector: XU_PERIPHERALCONTROL_PANTILT_MODE_CONTROL,
-            query: UVC_SET_CUR,
-            size: 1,
-            data: &mut val as *mut u8,
-        };
-
-        unsafe {
-            ioctl_call(self.raw_fd(), UVCIOC_CTRL_QUERY, &mut query)
-                .context("Failed to recall hardware preset via UVC XU")?;
-        }
 
         Ok(())
     }

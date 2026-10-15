@@ -121,10 +121,18 @@ fn launch_gui(device: CameraDevice, port: u16, no_browser: bool) -> Result<()> {
             // Try launching Chrome in native-like borderless app mode first
             let chrome_res = std::process::Command::new("google-chrome")
                 .arg(format!("--app={}", url))
+                .arg("--use-fake-ui-for-media-stream")
+                .arg("--autoplay-policy=no-user-gesture-required")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn();
 
             if chrome_res.is_err() {
-                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&url)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
             }
         });
     }
@@ -249,16 +257,28 @@ fn handle_presets(device: &CameraDevice, args: PresetArgs) -> Result<()> {
     let mut pm = PresetManager::load();
 
     if let Some(p) = args.recall {
-        println!("Recalling Hardware Preset {}...", p);
-        device.goto_hardware_preset(p)?;
-        println!("Camera moved to Hardware Preset {}.", p);
+        println!("Recalling Preset {}...", p);
+        match pm.recall_slot(p, device) {
+            Ok(preset) => {
+                println!(
+                    "Camera moved to Preset {}: Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
+                    p, preset.pan_deg, preset.tilt_deg, preset.zoom_x
+                );
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
         return Ok(());
     }
 
     if let Some(p) = args.save {
-        println!("Saving current position to Hardware Preset {}...", p);
-        device.save_hardware_preset(p)?;
-        println!("Saved current position to Hardware Preset {}.", p);
+        println!("Saving current position to Preset {}...", p);
+        let preset = pm.save_slot(p, device)?;
+        println!(
+            "Saved position to Preset {}: Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
+            p, preset.pan_deg, preset.tilt_deg, preset.zoom_x
+        );
         return Ok(());
     }
 
@@ -271,21 +291,30 @@ fn handle_presets(device: &CameraDevice, args: PresetArgs) -> Result<()> {
 
         pm.set_preset(&name, pan, tilt, zoom, brightness, freq)?;
         println!(
-            "Saved software preset '{}': Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
+            "Saved preset '{}': Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
             name, pan, tilt, zoom
         );
         return Ok(());
     }
 
     if let Some(name) = args.recall_soft {
-        pm.apply(device, &name)?;
-        println!("Applied software preset '{}'.", name);
+        match pm.apply(device, &name) {
+            Ok(preset) => {
+                println!(
+                    "Applied preset '{}': Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x",
+                    name, preset.pan_deg, preset.tilt_deg, preset.zoom_x
+                );
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
         return Ok(());
     }
 
     if let Some(name) = args.delete_soft {
         if pm.delete_preset(&name)? {
-            println!("Deleted software preset '{}'.", name);
+            println!("Deleted preset '{}'.", name);
         } else {
             println!("Preset '{}' did not exist.", name);
         }
@@ -294,7 +323,7 @@ fn handle_presets(device: &CameraDevice, args: PresetArgs) -> Result<()> {
 
     if args.list_soft {
         let list = pm.list();
-        println!("Software presets ({}):", list.len());
+        println!("Presets ({}):", list.len());
         for p in list {
             println!(
                 "  • {:<15} Pan: {:+.1}°, Tilt: {:+.1}°, Zoom: {:.1}x",
@@ -304,8 +333,19 @@ fn handle_presets(device: &CameraDevice, args: PresetArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("Hardware Presets: 1 through 8 (use --save <1-8> or --recall <1-8>)");
-    println!("Software Presets: (use --save-soft <name> or --recall-soft <name>)");
+    let list = pm.list();
+    println!("Presets ({}) stored in config:", list.len());
+    for p in list {
+        println!(
+            "  • Slot {:<8} Pan: {:+.1}°, Tilt: {:+.1}°, Zoom: {:.1}x",
+            p.name, p.pan_deg, p.tilt_deg, p.zoom_x
+        );
+    }
+    println!("\nUsage:");
+    println!("  openptz preset --save <1-8>");
+    println!("  openptz preset --recall <1-8>");
+    println!("  openptz preset --save-soft <name>");
+    println!("  openptz preset --recall-soft <name>");
     Ok(())
 }
 
@@ -389,11 +429,13 @@ fn handle_compat_flags(device: &CameraDevice, args: &Cli) -> Result<bool> {
         return Ok(true);
     }
     if let Some(p) = args.compat_store {
-        device.save_hardware_preset(p)?;
+        let mut pm = PresetManager::load();
+        pm.save_slot(p, device)?;
         return Ok(true);
     }
     if let Some(p) = args.compat_restore {
-        device.goto_hardware_preset(p)?;
+        let pm = PresetManager::load();
+        pm.recall_slot(p, device)?;
         return Ok(true);
     }
 

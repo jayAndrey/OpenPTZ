@@ -29,7 +29,15 @@ pub struct PresetManager {
 impl PresetManager {
     pub fn config_path() -> PathBuf {
         if let Some(config_dir) = dirs::config_dir() {
-            config_dir.join("ptz-rally").join("presets.json")
+            let primary = config_dir.join("openptz").join("presets.json");
+            if primary.exists() {
+                return primary;
+            }
+            let legacy = config_dir.join("ptz-rally").join("presets.json");
+            if legacy.exists() {
+                return legacy;
+            }
+            primary
         } else {
             PathBuf::from("presets.json")
         }
@@ -76,7 +84,7 @@ impl PresetManager {
         zoom_x: f32,
         brightness: Option<i32>,
         power_line_frequency: Option<i32>,
-    ) -> Result<()> {
+    ) -> Result<Preset> {
         let preset = Preset {
             name: name.to_string(),
             pan_deg,
@@ -85,8 +93,30 @@ impl PresetManager {
             brightness,
             power_line_frequency,
         };
-        self.presets.insert(name.to_string(), preset);
-        self.save()
+        self.presets.insert(name.to_string(), preset.clone());
+        self.save()?;
+        Ok(preset)
+    }
+
+    /// Save current camera coordinates into a numbered slot (1..8)
+    pub fn save_slot(&mut self, slot: u8, dev: &CameraDevice) -> Result<Preset> {
+        let pan = dev.get_pan_deg()?;
+        let tilt = dev.get_tilt_deg()?;
+        let zoom = dev.get_zoom_x()?;
+        let brightness = dev.get_brightness().ok();
+        let freq = dev.get_power_line_frequency().ok();
+
+        self.set_preset(&slot.to_string(), pan, tilt, zoom, brightness, freq)
+    }
+
+    /// Recall a numbered slot (1..8) on camera
+    pub fn recall_slot(&self, slot: u8, dev: &CameraDevice) -> Result<Preset> {
+        self.apply(dev, &slot.to_string())
+    }
+
+    #[allow(dead_code)]
+    pub fn get_slot(&self, slot: u8) -> Option<&Preset> {
+        self.presets.get(&slot.to_string())
     }
 
     pub fn delete_preset(&mut self, name: &str) -> Result<bool> {
@@ -97,6 +127,7 @@ impl PresetManager {
         Ok(removed)
     }
 
+    #[allow(dead_code)]
     pub fn get_preset(&self, name: &str) -> Option<&Preset> {
         self.presets.get(name)
     }
@@ -105,10 +136,10 @@ impl PresetManager {
         self.presets.values().collect()
     }
 
-    pub fn apply(&self, dev: &CameraDevice, name: &str) -> Result<()> {
+    pub fn apply(&self, dev: &CameraDevice, name: &str) -> Result<Preset> {
         let preset = match self.presets.get(name) {
-            Some(p) => p,
-            None => bail!("Software preset '{}' not found", name),
+            Some(p) => p.clone(),
+            None => bail!("Preset '{}' is not saved yet", name),
         };
 
         dev.move_pan_tilt(preset.pan_deg, preset.tilt_deg)?;
@@ -121,6 +152,37 @@ impl PresetManager {
             let _ = dev.set_power_line_frequency(f as u32);
         }
 
-        Ok(())
+        Ok(preset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_preset_serialization() {
+        let mut mgr = PresetManager::default();
+        mgr.presets.insert(
+            "1".to_string(),
+            Preset {
+                name: "1".to_string(),
+                pan_deg: 15.0,
+                tilt_deg: -5.0,
+                zoom_x: 2.0,
+                brightness: Some(128),
+                power_line_frequency: Some(1),
+            },
+        );
+
+        let json = serde_json::to_string_pretty(&mgr).unwrap();
+        assert!(json.contains("\"pan_deg\": 15.0"));
+        assert!(json.contains("\"name\": \"1\""));
+
+        let deserialized: PresetManager = serde_json::from_str(&json).unwrap();
+        let p1 = deserialized.presets.get("1").unwrap();
+        assert_eq!(p1.pan_deg, 15.0);
+        assert_eq!(p1.tilt_deg, -5.0);
+        assert_eq!(p1.zoom_x, 2.0);
     }
 }

@@ -18,10 +18,12 @@ use ratatui::{
     Frame, Terminal,
 };
 
+use crate::presets::PresetManager;
 use crate::v4l2::CameraDevice;
 
 pub struct TuiApp {
     device: CameraDevice,
+    preset_mgr: PresetManager,
     step_deg: f32,
     zoom_step: f32,
     status_message: String,
@@ -33,6 +35,7 @@ impl TuiApp {
     pub fn new(device: CameraDevice) -> Self {
         Self {
             device,
+            preset_mgr: PresetManager::load(),
             step_deg: 5.0,
             zoom_step: 0.5,
             status_message: "Ready. Use Arrow keys to Pan/Tilt, +/- to Zoom, 1-8 for Presets.".to_string(),
@@ -135,16 +138,16 @@ impl TuiApp {
             // Presets 1-8: Shift = Save, Normal = Recall
             (KeyCode::Char(c @ '1'..='8'), KeyModifiers::SHIFT) => {
                 let num = c.to_digit(10).unwrap() as u8;
-                match self.device.save_hardware_preset(num) {
-                    Ok(()) => self.set_status(format!("Hardware Preset {} saved!", num)),
+                match self.preset_mgr.save_slot(num, &self.device) {
+                    Ok(p) => self.set_status(format!("Preset {} saved! (Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x)", num, p.pan_deg, p.tilt_deg, p.zoom_x)),
                     Err(e) => self.set_status(format!("Save Preset {} failed: {}", num, e)),
                 }
             }
             (KeyCode::Char(c @ '1'..='8'), _) => {
                 let num = c.to_digit(10).unwrap() as u8;
-                match self.device.goto_hardware_preset(num) {
-                    Ok(()) => self.set_status(format!("Moved to Hardware Preset {}", num)),
-                    Err(e) => self.set_status(format!("Recall Preset {} failed: {}", num, e)),
+                match self.preset_mgr.recall_slot(num, &self.device) {
+                    Ok(p) => self.set_status(format!("Moved to Preset {}: Pan={:+.1}°, Tilt={:+.1}°, Zoom={:.1}x", num, p.pan_deg, p.tilt_deg, p.zoom_x)),
+                    Err(_) => self.set_status(format!("Preset {} is empty! Press Shift+{} to save current position.", num, num)),
                 }
             }
 

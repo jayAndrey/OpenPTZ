@@ -3,10 +3,10 @@ use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ptz-rally",
+    name = "openptz",
     author = "andryjay",
     version = "0.1.0",
-    about = "PTZ Camera Controller for Logitech Rally and UVC cameras on Linux (Ubuntu)"
+    about = "OpenPTZ: Cross-Platform PTZ Camera Controller with Live Video, Web GUI, TUI, and REST API"
 )]
 pub struct Cli {
     /// Device path (e.g. /dev/video2). If omitted, automatically selects the best camera.
