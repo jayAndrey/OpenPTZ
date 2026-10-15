@@ -92,7 +92,7 @@ jobs:
             openptz-linux-x86_64.tar.gz
 
   build-windows:
-    name: Build Windows Release (x86_64 Zip)
+    name: Build Windows Release (MSI Installer, Setup EXE & Zip)
     runs-on: windows-latest
 
     steps:
@@ -105,24 +105,52 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
       - name: Build release binary
         run: cargo build --release
 
+      # 1. Package Windows Portable ZIP
       - name: Package Windows ZIP
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path package/openptz
           Copy-Item target/release/openptz.exe package/openptz/
+          Copy-Item assets/openptz.ico package/openptz/
           Copy-Item README.md package/openptz/
           Copy-Item LICENSE-MIT package/openptz/
           Copy-Item LICENSE-APACHE package/openptz/
           Compress-Archive -Path package/openptz -DestinationPath openptz-windows-x86_64.zip
 
+      # 2. Package Windows MSI Installer (WiX Toolset)
+      - name: Build Windows MSI Installer
+        shell: pwsh
+        run: |
+          $ver = if ("${{ github.ref_name }}" -match '^v?([0-9]+\.[0-9]+\.[0-9]+)') { $matches[1] } else { "0.1.0" }
+          $wixBin = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+          if (Test-Path "$wixBin\candle.exe") {
+            $env:PATH = "$wixBin;$env:PATH"
+          }
+          New-Item -ItemType Directory -Force -Path target/wix | Out-Null
+          candle -arch x64 -dVersion="$ver" -ext WixUIExtension wix/main.wxs -out target/wix/main.wixobj
+          light -ext WixUIExtension target/wix/main.wixobj -out openptz-windows-x86_64.msi
+
+      # 3. Package Inno Setup EXE Installer
+      - name: Build Inno Setup Installer (.exe)
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer/windows/openptz.iss
+          Move-Item target/installer/openptz-windows-x86_64-setup.exe ./openptz-windows-x86_64-setup.exe
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-binaries
-          path: openptz-windows-x86_64.zip
+          path: |
+            openptz-windows-x86_64.zip
+            openptz-windows-x86_64.msi
+            openptz-windows-x86_64-setup.exe
 
   build-macos:
     name: Build macOS Release (Universal / Apple Silicon & Intel)
@@ -159,6 +187,21 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE package-arm/openptz/
           tar -czvf openptz-macos-aarch64.tar.gz -C package-arm openptz
 
+      # 3. Package Universal DMG Installer
+      - name: Package Universal macOS DMG
+        run: |
+          mkdir -p dmg-staging
+          mkdir -p dmg-staging/OpenPTZ.app/Contents/MacOS
+          mkdir -p dmg-staging/OpenPTZ.app/Contents/Resources
+          lipo -create -output dmg-staging/OpenPTZ.app/Contents/MacOS/openptz \
+            target/x86_64-apple-darwin/release/openptz \
+            target/aarch64-apple-darwin/release/openptz
+          chmod +x dmg-staging/OpenPTZ.app/Contents/MacOS/openptz
+          cp assets/openptz.svg dmg-staging/OpenPTZ.app/Contents/Resources/
+          cp README.md LICENSE-MIT LICENSE-APACHE dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          hdiutil create -volname "OpenPTZ" -srcfolder dmg-staging -ov -format UDZO openptz-macos-universal.dmg
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -166,6 +209,7 @@ jobs:
           path: |
             openptz-macos-x86_64.tar.gz
             openptz-macos-aarch64.tar.gz
+            openptz-macos-universal.dmg
 
   publish-release:
     name: Publish GitHub Release

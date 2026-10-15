@@ -56,3 +56,9 @@ assets = [
     ["assets/openptz.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["README.md", "usr/share/doc/openptz/README.md", "644"],
 ]
+
+[package.metadata.wix]
+upgrade-guid = "1B65787F-B637-4AEB-B220-3463684B69A9"
+path-guid = "F1EB2729-5F63-4DBD-8ACD-FBFCD0F89A1D"
+license = "assets/license.rtf"
+eula = false
