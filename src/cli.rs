@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(
     name = "openptz",
     author = "andryjay",
-    version = "0.1.0",
+    version,
     about = "OpenPTZ: Cross-Platform PTZ Camera Controller with Live Video, Web GUI, TUI, and REST API"
 )]
 pub struct Cli {
