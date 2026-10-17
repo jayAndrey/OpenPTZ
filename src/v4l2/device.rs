@@ -91,7 +91,6 @@ impl V4l2Device {
 
                         let is_rally = dev.is_rally();
                         let supports_ptz = is_rally
-                            || dev.profile.capabilities().has_pan_tilt
                             || dev.get_ctrl(V4L2_CID_PAN_ABSOLUTE).is_ok()
                             || dev.get_ctrl(V4L2_CID_ZOOM_ABSOLUTE).is_ok();
 
